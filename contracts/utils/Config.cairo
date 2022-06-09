@@ -8,6 +8,9 @@ const EXODUS_MODE_ON = 1
 # Max deposit of ERC20 token that is possible to deposit
 const MAX_DEPOSIT_AMOUNT = 2 ** 104 - 1
 
+# Max account id that could be registered in the network
+const MAX_ACCOUNT_ID = 2 ** 24 - 1
+
 # Max sub account id that could be bound to account id
 const MAX_SUB_ACCOUNT_ID = 2 ** 3 - 1
 

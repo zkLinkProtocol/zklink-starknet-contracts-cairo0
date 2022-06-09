@@ -16,9 +16,12 @@ from starkware.starknet.common.syscalls import (
 
 from contracts.utils.Operations import (
     OPERATIONS_OPTYPE_DEPOSIT,
+    OPERATIONS_OPTYPE_FULL_EXIT,
     PriorityOperation,
     DepositOperation,
-    convert_deposit_operation_to_array
+    FullExit,
+    convert_deposit_operation_to_array,
+    convert_fullexit_operation_to_array
 )
 
 from contracts.utils.Utils import (
@@ -30,6 +33,7 @@ from contracts.utils.Config import (
     EXODUS_MODE_ON,
     MAX_PRIORITY_REQUESTS,
     MAX_DEPOSIT_AMOUNT,
+    MAX_ACCOUNT_ID,
     MAX_SUB_ACCOUNT_ID,
     PRIORITY_EXPIRATION
 )
@@ -124,6 +128,84 @@ func deposit_ETH{
     return ()
 end
 
+# # Deposit ERC20 token to Layer 2 - transfer ERC20 tokens from user into contract, validate it, register deposit
+# # it MUST be ok to call other external functions within from this function
+# # when the token(eg. erc777,erc1155) is not a pure erc20 token
+# @external
+# func deposit_ERC20{
+#     syscall_ptr : felt*,
+#     pedersen_ptr : HashBuiltin*,
+#     bitwise_ptr : BitwiseBuiltin*,
+#     range_check_ptr
+# }(zklink_address : felt, sub_account_id : felt, amount : felt):
+#     # Lock with reentrancy_guard
+#     reentrancy_guard_lock()
+    
+#     # deposit
+#     deposit(
+#         token_address=ETH_ADDRESS,
+#         amount=amount,
+#         zklink_address=zklink_address,
+#         sub_account_id=sub_account_id
+#     )
+
+#     # Unlock
+#     reentrancy_guard_unlock()
+#     return ()
+# end
+
+# Register full exit request - pack pubdata, add priority request
+@external
+func request_full_exit{
+    syscall_ptr : felt*,
+    pedersen_ptr : HashBuiltin*,
+    bitwise_ptr : BitwiseBuiltin*,
+    range_check_ptr
+}(account_id : felt, sub_account_id : felt, token_id : felt):
+    # Lock with reentrancy_guard
+    reentrancy_guard_lock()
+
+    # Checks
+    # account_id and sub_account_id MUST be valid
+    with_attr error_message("a0"):
+        assert_nn_le(account_id, MAX_ACCOUNT_ID)
+    end
+    with_attr error_message("a1"):
+        assert_nn_le(sub_account_id, MAX_SUB_ACCOUNT_ID)
+    end
+    # token MUST be registered to ZkLink
+    let (governance_address) = get_governance_address_storage()
+    let (rt : RegisteredToken) = IGovernance.get_token(
+        contract_address=governance_address,
+        token_id=token_id
+    )
+    with_attr error_message("a2"):
+        assert rt.registered = 1
+    end
+    # to prevent ddos
+    let (requests) = get_total_open_priority_requests()
+    with_attr error_message("a3"):
+        assert_nn_le(requests, MAX_PRIORITY_REQUESTS-1)
+    end
+
+    # Effects
+    # Priority Queue request
+    let (chain_id) = get_chain_id()
+    let (sender) = get_caller_address()
+    let op = FullExit(
+        chain_id=chain_id,
+        account_id=account_id,
+        sub_account_id=sub_account_id,
+        owner=sender,   # Only the owner of account can fullExit for them self
+        token_id=token_id,
+        amount=0    # unknown at this point
+    )
+    let (num, pub_data) = convert_fullexit_operation_to_array(op)
+    add_priority_request(op_type=OPERATIONS_OPTYPE_FULL_EXIT, pub_data=pub_data, n_elements=num)
+    # Unlock
+    reentrancy_guard_unlock()
+    return ()
+end
 
 #
 # Internal function

@@ -26,7 +26,7 @@ struct PriorityOperation:
     member op_type : felt
 end
 
-# Deposit Operations
+# Deposit Operation
 struct DepositOperation:
     member chain_id : felt      # deposit from which chain that identified by l2 chain id
     member account_id : felt    # the account id bound to the owner address, ignored at serialization and will be set when the block is submitted
@@ -36,17 +36,42 @@ struct DepositOperation:
     member owner : felt       # the address that receive deposited token at l2
 end
 
-func convert_deposit_operation_to_array(deposit : DepositOperation) -> (n_elements : felt, elements : felt*):
+func convert_deposit_operation_to_array(op : DepositOperation) -> (n_elements : felt, elements : felt*):
     alloc_locals
-    local deposit_array : felt*
-    let (local deposit_array : felt*) = alloc()
+    local op_array : felt*
+    let (local op_array : felt*) = alloc()
 
-    assert deposit_array[0] = deposit.chain_id
-    assert deposit_array[1] = deposit.account_id
-    assert deposit_array[2] = deposit.sub_account_id
-    assert deposit_array[3] = deposit.token_id
-    assert deposit_array[4] = deposit.amount
-    assert deposit_array[5] = deposit.owner
+    assert op_array[0] = op.chain_id
+    assert op_array[1] = op.account_id
+    assert op_array[2] = op.sub_account_id
+    assert op_array[3] = op.token_id
+    assert op_array[4] = op.amount
+    assert op_array[5] = op.owner
 
-    return (n_elements=6, elements=deposit_array)
+    return (n_elements=6, elements=op_array)
+end
+
+# FullExit Operation
+struct FullExit:
+    member chain_id : felt          # withdraw to which chain that identified by l2 chain id
+    member account_id : felt        # the account id to withdraw from
+    member sub_account_id : felt    # the sub account is bound to account, default value is 0(the global public sub account)
+    member owner : felt             # the address that own the account at l2
+    member token_id : felt          # the token that registered to l2
+    member amount : felt            # the token amount that fully withdrawn to owner, ignored at serialization and will be set when the block is submitted
+end
+
+func convert_fullexit_operation_to_array(op : FullExit) -> (n_elements : felt, elements : felt*):
+    alloc_locals
+    local op_array : felt*
+    let (local op_array : felt*) = alloc()
+
+    assert op_array[0] = op.chain_id
+    assert op_array[1] = op.account_id
+    assert op_array[2] = op.sub_account_id
+    assert op_array[3] = op.owner
+    assert op_array[4] = op.token_id
+    assert op_array[5] = op.amount
+
+    return (n_elements=6, elements=op_array)
 end
