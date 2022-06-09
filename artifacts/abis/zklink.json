@@ -1,0 +1,276 @@
+[
+    {
+        "members": [
+            {
+                "name": "hashed_pub_data",
+                "offset": 0,
+                "type": "Uint256"
+            },
+            {
+                "name": "expiration_block",
+                "offset": 2,
+                "type": "felt"
+            },
+            {
+                "name": "op_type",
+                "offset": 3,
+                "type": "felt"
+            }
+        ],
+        "name": "PriorityOperation",
+        "size": 4,
+        "type": "struct"
+    },
+    {
+        "members": [
+            {
+                "name": "low",
+                "offset": 0,
+                "type": "felt"
+            },
+            {
+                "name": "high",
+                "offset": 1,
+                "type": "felt"
+            }
+        ],
+        "name": "Uint256",
+        "size": 2,
+        "type": "struct"
+    },
+    {
+        "members": [
+            {
+                "name": "registered",
+                "offset": 0,
+                "type": "felt"
+            },
+            {
+                "name": "paused",
+                "offset": 1,
+                "type": "felt"
+            },
+            {
+                "name": "token_address",
+                "offset": 2,
+                "type": "felt"
+            }
+        ],
+        "name": "RegisteredToken",
+        "size": 3,
+        "type": "struct"
+    },
+    {
+        "inputs": [],
+        "name": "get_total_open_priority_requests",
+        "outputs": [
+            {
+                "name": "requests",
+                "type": "felt"
+            }
+        ],
+        "stateMutability": "view",
+        "type": "function"
+    },
+    {
+        "inputs": [],
+        "name": "get_chain_id",
+        "outputs": [
+            {
+                "name": "chain_id",
+                "type": "felt"
+            }
+        ],
+        "stateMutability": "view",
+        "type": "function"
+    },
+    {
+        "inputs": [],
+        "name": "get_first_priority_request_id",
+        "outputs": [
+            {
+                "name": "request_id",
+                "type": "felt"
+            }
+        ],
+        "stateMutability": "view",
+        "type": "function"
+    },
+    {
+        "inputs": [
+            {
+                "name": "priority_request_id",
+                "type": "felt"
+            }
+        ],
+        "name": "get_priority_request",
+        "outputs": [
+            {
+                "name": "operation",
+                "type": "PriorityOperation"
+            }
+        ],
+        "stateMutability": "view",
+        "type": "function"
+    },
+    {
+        "data": [
+            {
+                "name": "sender",
+                "type": "felt"
+            },
+            {
+                "name": "serial_id",
+                "type": "felt"
+            },
+            {
+                "name": "op_type",
+                "type": "felt"
+            },
+            {
+                "name": "pub_data_len",
+                "type": "felt"
+            },
+            {
+                "name": "pub_data",
+                "type": "felt*"
+            },
+            {
+                "name": "expiration_block",
+                "type": "felt"
+            }
+        ],
+        "keys": [],
+        "name": "new_priority_request",
+        "type": "event"
+    },
+    {
+        "inputs": [],
+        "name": "get_governance_address",
+        "outputs": [
+            {
+                "name": "address",
+                "type": "felt"
+            }
+        ],
+        "stateMutability": "view",
+        "type": "function"
+    },
+    {
+        "inputs": [
+            {
+                "name": "token_address",
+                "type": "felt"
+            }
+        ],
+        "name": "get_token_id",
+        "outputs": [
+            {
+                "name": "token_id",
+                "type": "felt"
+            }
+        ],
+        "stateMutability": "view",
+        "type": "function"
+    },
+    {
+        "inputs": [
+            {
+                "name": "token_id",
+                "type": "felt"
+            }
+        ],
+        "name": "get_token",
+        "outputs": [
+            {
+                "name": "token",
+                "type": "RegisteredToken"
+            }
+        ],
+        "stateMutability": "view",
+        "type": "function"
+    },
+    {
+        "inputs": [
+            {
+                "name": "token_id",
+                "type": "felt"
+            },
+            {
+                "name": "token_address",
+                "type": "felt"
+            }
+        ],
+        "name": "set_token_id",
+        "outputs": [],
+        "type": "function"
+    },
+    {
+        "inputs": [
+            {
+                "name": "token_id",
+                "type": "felt"
+            },
+            {
+                "name": "token_address",
+                "type": "felt"
+            }
+        ],
+        "name": "set_token",
+        "outputs": [],
+        "type": "function"
+    },
+    {
+        "inputs": [],
+        "name": "get_governance_address_storage",
+        "outputs": [
+            {
+                "name": "address",
+                "type": "felt"
+            }
+        ],
+        "stateMutability": "view",
+        "type": "function"
+    },
+    {
+        "inputs": [
+            {
+                "name": "governance_address",
+                "type": "felt"
+            }
+        ],
+        "name": "set_governance_address_storage",
+        "outputs": [],
+        "type": "function"
+    },
+    {
+        "inputs": [
+            {
+                "name": "governance_address",
+                "type": "felt"
+            }
+        ],
+        "name": "constructor",
+        "outputs": [],
+        "type": "constructor"
+    },
+    {
+        "inputs": [
+            {
+                "name": "zklink_address",
+                "type": "felt"
+            },
+            {
+                "name": "sub_account_id",
+                "type": "felt"
+            },
+            {
+                "name": "amount",
+                "type": "felt"
+            }
+        ],
+        "name": "deposit_ETH",
+        "outputs": [],
+        "type": "function"
+    }
+]
