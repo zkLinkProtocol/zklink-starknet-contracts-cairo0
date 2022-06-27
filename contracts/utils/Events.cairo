@@ -12,3 +12,7 @@ func new_priority_request(
     expiration_block : felt
 ):
 end
+
+@event
+func with_draw(token_id : felt, amount : felt):
+end
