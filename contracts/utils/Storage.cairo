@@ -10,6 +10,22 @@ from starkware.cairo.common.uint256 import Uint256
 from contracts.utils.Operations import PriorityOperation
 from contracts.utils.Bytes import Bytes, read_felt, read_uint256
 
+# Total number of executed blocks i.e. blocks[totalBlocksExecuted] points at the latest executed block (block 0 is genesis)
+@storage_var
+func totalBlocksExecuted() -> (blocks : felt):
+end
+
+@view
+@view
+func get_totalBlocksExecuted{
+    syscall_ptr : felt*,
+    pedersen_ptr : HashBuiltin*,
+    range_check_ptr
+}() -> (res : felt):
+    let (blocks) = totalBlocksExecuted.read()
+    return (blocks)
+end
+
 # Indicates that exodus (mass exit) mode is triggered.
 # Once it was raised, it can not be cleared again, and all users must exit
 @storage_var
@@ -122,6 +138,78 @@ func set_network_governor_address{
     return ()
 end
 
+# Total number of committed blocks i.e. blocks[totalBlocksCommitted] points at the latest committed block
+@storage_var
+func totalBlocksCommitted() -> (blocks : felt):
+end
+
+@view
+func get_totalBlocksCommitted{
+    syscall_ptr : felt*,
+    pedersen_ptr : HashBuiltin*,
+    range_check_ptr
+}() -> (blocks : felt):
+    let (blocks) = totalBlocksCommitted.read()
+    return (blocks)
+end
+
+func set_totalBlocksCommitted{
+    syscall_ptr : felt*,
+    pedersen_ptr : HashBuiltin*,
+    range_check_ptr
+}(blocks : felt):
+    totalBlocksCommitted.write(blocks)
+    return ()
+end
+
+# Total blocks proven.
+@storage_var
+func totalBlocksProven() -> (blocks : felt):
+end
+
+@view
+func get_totalBlocksProven{
+    syscall_ptr : felt*,
+    pedersen_ptr : HashBuiltin*,
+    range_check_ptr
+}() -> (blocks : felt):
+    let (blocks) = totalBlocksProven.read()
+    return (blocks)
+end
+
+func set_totalBlocksProven{
+    syscall_ptr : felt*,
+    pedersen_ptr : HashBuiltin*,
+    range_check_ptr
+}(blocks : felt):
+    totalBlocksProven.write(blocks)
+    return ()
+end
+
+# Latest synchronized block height
+@storage_var
+func totalBlocksSynchronized() -> (height : felt):
+end
+
+@view
+func get_totalBlocksSynchronized{
+    syscall_ptr : felt*,
+    pedersen_ptr : HashBuiltin*,
+    range_check_ptr
+}() -> (height : felt):
+    let (blocks) = totalBlocksSynchronized.read()
+    return (blocks)
+end
+
+func set_totalBlocksSynchronized{
+    syscall_ptr : felt*,
+    pedersen_ptr : HashBuiltin*,
+    range_check_ptr
+}(height : felt):
+    totalBlocksSynchronized.write(height)
+    return ()
+end
+
 # Total number of requests
 @storage_var
 func total_open_priority_requests() -> (requests : felt):
@@ -159,6 +247,17 @@ func add_total_committed_priority_requests{
 }(amount : felt):
     let (old_total_committed_priority_requests) = get_total_committed_priority_requests()
     total_committed_priority_requests.write(old_total_committed_priority_requests + amount)
+    return ()
+end
+
+func sub_total_committed_priority_requests{
+    syscall_ptr : felt*,
+    pedersen_ptr : HashBuiltin*,
+    range_check_ptr
+}(amount : felt):
+    let (old_total_committed_priority_requests) = get_total_committed_priority_requests()
+    assert_nn(old_total_committed_priority_requests - amount)
+    total_committed_priority_requests.write(old_total_committed_priority_requests - amount)
     return ()
 end
 
@@ -430,7 +529,7 @@ func get_storedBlockHashes{
     return (hash)
 end
 
-func add_storedBlockHashes{
+func set_storedBlockHashes{
     syscall_ptr : felt*,
     pedersen_ptr : HashBuiltin*,
     range_check_ptr
@@ -484,4 +583,13 @@ func add_auth_facts{
 }(owner_and_nonce : (felt, felt), res : Uint256):
     auth_facts.write(owner_and_nonce, res)
     return ()
+end
+
+# Returns the keccak hash of the ABI-encoded StoredBlockInfo
+func hashStoredBlockInfo{
+    range_check_ptr,
+    bitwise_ptr : BitwiseBuiltin*
+}(_storedBlockInfo : StoredBlockInfo) -> (hash : Uint256):
+    # TODO : keccak
+    return (Uint256(0, 0))
 end

@@ -20,3 +20,7 @@ end
 @event
 func block_commit(block_number : felt):
 end
+
+@event
+func BlocksRevert(totalBlocksVerified : felt, totalBlocksCommitted):
+end

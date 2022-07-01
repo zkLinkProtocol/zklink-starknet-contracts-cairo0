@@ -86,6 +86,7 @@ from contracts.utils.Config import (
 )
 
 from contracts.utils.Storage import (
+    get_totalBlocksExecuted,
     get_exodus_mode,
     set_verifier_contract_address,
     set_periphery_contract_address,
@@ -93,17 +94,25 @@ from contracts.utils.Storage import (
     RegisteredToken,
     get_token_id,
     get_token,
+    get_totalBlocksCommitted,
+    set_totalBlocksCommitted,
+    get_totalBlocksProven,
+    set_totalBlocksProven,
     get_total_open_priority_requests,
     get_total_committed_priority_requests,
     add_total_committed_priority_requests,
+    sub_total_committed_priority_requests,
+    get_totalBlocksSynchronized,
+    set_totalBlocksSynchronized
     get_chain_id,
     get_first_priority_request_id,
     set_priority_request,
     only_delegate_call,
     StoredBlockInfo,
+    hashStoredBlockInfo,
     parse_stored_block_info,
     get_storedBlockHashes,
-    add_storedBlockHashes,
+    set_storedBlockHashes,
     convert_stored_block_info_to_array,
     get_pending_balance,
     add_pending_balance,
@@ -117,7 +126,8 @@ from contracts.utils.Storage import (
 from contracts.utils.Events import (
     new_priority_request,
     with_draw,
-    block_commit
+    block_commit,
+    BlocksRevert
 )
 
 from contracts.utils.ReentrancyGuard import (
@@ -620,6 +630,86 @@ func commit_compressed_block{
     _commit_block(_lastCommittedBlockData, new_block_data, true, _newBlockExtraData)
 end
 
+# struct ProofInput:
+#     member recursiveInput_len : felt
+#     member recursiveInput : Uint256*
+#     member proof_len : felt
+#     member proof : Uint256*
+#     member commitments_len : felt
+#     member commitments : Uint256*
+#     member vkIndexes_len : felt
+#     member vkIndexes : felt*
+#     member subproofsLimbs_len : felt
+#     member subproofsLimbs : Uint256*
+# end
+
+# Reverts unExecuted blocks
+func revertBlocks{
+    syscall_ptr : felt*,
+    pedersen_ptr : HashBuiltin*,
+    bitwise_ptr : BitwiseBuiltin*,
+    range_check_ptr
+}(_blocksToRevert_len : felt, _blocksToRevert : StoredBlockInfo*):
+    alloc_locals
+    let (blocksCommitted) = get_totalBlocksCommitted()
+    let (local totalBlocksExecuted) = get_totalBlocksExecuted()
+    let (blocksToRevert) = min_felt(_blocksToRevert_len, blocksCommitted - totalBlocksExecuted)
+
+    let (local blocksCommitted, local revertedPriorityRequests) = _revertBlocks(
+        _blocksToRevert, _blocksToRevert - 1, blocksCommitted, 0)
+    
+    set_totalBlocksCommitted(blocksCommitted)
+    sub_total_committed_priority_requests(revertedPriorityRequests)
+
+    let (local totalBlocksCommitted) = get_totalBlocksCommitted()
+    let (totalBlocksProven) = get_totalBlocksProven()
+    let (small) = is_le(totalBlocksCommitted, totalBlocksProven - 1)
+    if small == 1:
+        set_totalBlocksProven(totalBlocksCommitted)
+    end
+
+    let (local totalBlocksProven) = get_totalBlocksProven()
+    let (totalBlocksSynchronized) = get_totalBlocksSynchronized()
+        let (small) = is_le(totalBlocksProven, totalBlocksSynchronized - 1)
+    if small == 1:
+        set_totalBlocksSynchronized(totalBlocksProven)
+    end
+
+    BlocksRevert.emit(totalBlocksExecuted, blocksCommitted)
+
+end
+
+func _revertBlocks{
+    syscall_ptr : felt*,
+    pedersen_ptr : HashBuiltin*,
+    bitwise_ptr : BitwiseBuiltin*,
+    range_check_ptr
+}(
+    _blocksToRevert : StoredBlockInfo*,
+    i : felt,
+    _blocksCommitted : felt,
+    _revertedPriorityRequests : felt
+) -> (blocksCommitted : felt, revertedPriorityRequests : felt):
+    if i == -1:
+        return(_blocksCommitted, _revertedPriorityRequests)
+    end
+
+    let (before_blocksCommitted, before_revertedPriorityRequests) = _revertBlocks(
+        _blocksToRevert, i - 1, _blocksCommitted, _revertedPriorityRequests)
+    
+    with_attr error_message("c"):
+        let (storedBlockHashes : Uint256) = get_storedBlockHashes(before_blocksCommitted)
+        let (hashedStoredBlockInfo : Uint256) = hashStoredBlockInfo(_blocksToRevert[i])
+
+        let (eq) = uint256_eq(storedBlockHashes, hashedStoredBlockInfo)
+        assert eq = 1
+    end
+
+    set_storedBlockHashes(before_blocksCommitted, Uint256(0, 0))
+
+    return (before_blocksCommitted - 1, before_revertedPriorityRequests + _blocksToRevert[i].priority_operations)
+end
+
 
 #
 # Internal function
@@ -760,7 +850,7 @@ func _commit_block{
     add_total_committed_priority_requests(_lastCommittedBlockData.priority_operations)
     let (n_elements : felt, elements : felt*) = convert_stored_block_info_to_array(_lastCommittedBlockData)
     let (new_stored_block_hash : Uint256) = hash_array_to_uint256(n_elements, elements)
-    add_storedBlockHashes(_lastCommittedBlockData.block_number, new_stored_block_hash)
+    set_storedBlockHashes(_lastCommittedBlockData.block_number, new_stored_block_hash)
 
 
     with_attr error_message("f2"):
