@@ -6,7 +6,7 @@ from starkware.cairo.common.uint256 import Uint256
 from starkware.cairo.common.alloc import alloc
 from starkware.cairo.common.math import assert_nn_le, unsigned_div_rem
 from starkware.cairo.common.math_cmp import is_le
-from contracts.utls.Bytes import split_bytes
+from contracts.utils.Bytes import Bytes, split_bytes, join_bytes
 
 # Computes the keccak hash of the given input
 func hash_array_to_uint160{
@@ -70,41 +70,46 @@ func min_felt{range_check_ptr}(a : felt, b : felt) -> (min : felt):
     end
 end
 
-# read element in pubdata
-# pubdata : array of felt, and every felt has PUBLIC_DATA_ELEMENT_BYTES bytes
-# pubdata_len : length of pubdata array, it shold be OPERATION_CHUNK_SIZE
-# bytes : size of data in bytes
-func read_pubdata{range_check_ptr}(pubdata : felt*, _offset : felt, bytes : felt) -> (offset, data):
-    # checks
-    assert_nn_le(offset, PUBLIC_DATA_ELEMENT_BYTES * OPERATION_CHUNK_SIZE)
-
-    # data in one chunk or two chunks
-    let (index, chunk_offset) = unsigned_div_rem(_offset, PUBLIC_DATA_ELEMENT_BYTES)
-    let (one_chunk) = is_le(chunk_offset + bytes, PUBLIC_DATA_ELEMENT_BYTES)
-
-    if one_chunk == 1:
-        let (data1) = split_bytes(PUBLIC_DATA_ELEMENT_BYTES, pubdata[index], chunk_offset, bytes)
-        return (_offset + bytes, data1)
-    else:
-        let (data2_1) = split_bytes(PUBLIC_DATA_ELEMENT_BYTES, pubdata[index], chunk_offset, PUBLIC_DATA_ELEMENT_BYTES - chunk_offset)
-        let (data2_2) = split_bytes(PUBLIC_DATA_ELEMENT_BYTES, pubdata[index + 1], 0, bytes - PUBLIC_DATA_ELEMENT_BYTES + chunk_offset)
-        let (data2) = join_bytes(data1, data2, bytes - PUBLIC_DATA_ELEMENT_BYTES + chunk_offset)
-        return (_offset + bytes, data2)
-    end
-
+func concat_hash{range_check_ptr, bitwise_ptr : BitwiseBuiltin*}(_hash : Uint256, _bytes : Bytes) -> (res : Uint256):
+    # TODO : keccak
+    return (Uint256(0, 0))
 end
 
-func slice_public_data{range_check_ptr}(pubdata : felt*, pubdata_offset : felt, size : felt) -> (data : felt*):
-    alloc_locals
-    let (local data : felt*) = alloc()
-    _slice_public_data(pubdata=pubdata + pubdata_index, new_data=data, index=size, length=size)
-end
+# # read element in pubdata
+# # pubdata : array of felt, and every felt has PUBLIC_DATA_ELEMENT_BYTES bytes
+# # pubdata_len : length of pubdata array, it shold be OPERATION_CHUNK_SIZE
+# # bytes : size of data in bytes
+# func read_pubdata{range_check_ptr}(pubdata : felt*, _offset : felt, bytes : felt) -> (offset, data):
+#     # checks
+#     assert_nn_le(_offset, PUBLIC_DATA_ELEMENT_BYTES * OPERATION_CHUNK_SIZE)
 
-func _slice_public_data{range_check_ptr}(pubdata : felt*, new_data : felt*, index : felt, length : felt):
-    if index == 0:
-        return ()
-    end
-    _slice_public_data(pubdata, new_data=new_data + 1, index=index - 1)
-    assert new_data[0] = pubdata[lenght - index]
-    return ()
-end
+#     # data in one chunk or two chunks
+#     let (index, chunk_offset) = unsigned_div_rem(_offset, PUBLIC_DATA_ELEMENT_BYTES)
+#     let (one_chunk) = is_le(chunk_offset + bytes, PUBLIC_DATA_ELEMENT_BYTES)
+
+#     if one_chunk == 1:
+#         let (data1) = split_bytes(PUBLIC_DATA_ELEMENT_BYTES, pubdata[index], chunk_offset, bytes)
+#         return (_offset + bytes, data1)
+#     else:
+#         let (data2_1) = split_bytes(PUBLIC_DATA_ELEMENT_BYTES, pubdata[index], chunk_offset, PUBLIC_DATA_ELEMENT_BYTES - chunk_offset)
+#         let (data2_2) = split_bytes(PUBLIC_DATA_ELEMENT_BYTES, pubdata[index + 1], 0, bytes - PUBLIC_DATA_ELEMENT_BYTES + chunk_offset)
+#         let (data2) = join_bytes(data1, data2, bytes - PUBLIC_DATA_ELEMENT_BYTES + chunk_offset)
+#         return (_offset + bytes, data2)
+#     end
+
+# end
+
+# func slice_public_data{range_check_ptr}(pubdata : felt*, pubdata_offset : felt, size : felt) -> (data : felt*):
+#     alloc_locals
+#     let (local data : felt*) = alloc()
+#     _slice_public_data(pubdata=pubdata + pubdata_index, new_data=data, index=size, length=size)
+# end
+
+# func _slice_public_data{range_check_ptr}(pubdata : felt*, new_data : felt*, index : felt, length : felt):
+#     if index == 0:
+#         return ()
+#     end
+#     _slice_public_data(pubdata, new_data=new_data + 1, index=index - 1)
+#     assert new_data[0] = pubdata[lenght - index]
+#     return ()
+# end

@@ -16,3 +16,7 @@ end
 @event
 func with_draw(token_id : felt, amount : felt):
 end
+
+@event
+func block_commit(block_number : felt):
+end

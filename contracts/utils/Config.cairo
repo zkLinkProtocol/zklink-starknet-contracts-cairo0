@@ -81,8 +81,22 @@ const ALL_CHAINS = 15
 # TODO: It should be a storage_var instead of constant
 const ETH_ADDRESS = 0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE
 
-# every pubdata bytes
-const PUBLIC_DATA_ELEMENT_BYTES = 16
-
 # Bytes in one chunk
 const CHUNK_BYTES = 14
+
+# see EIP-712
+# keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)");
+const CHANGE_PUBKEY_DOMAIN_SEPARATOR_LOW = 0x239f7b179b0ffacaa9a75d522b39400f
+const CHANGE_PUBKEY_DOMAIN_SEPARATOR_HIGH = 0x8b73c3c69bb8fe3d512ecc4cf759cc79
+
+# keccak256("ZkLink");
+const CHANGE_PUBKEY_HASHED_NAME_LOW = 0x3e725ebc4ed8a2d9cea6e29b98608795
+const CHANGE_PUBKEY_HASHED_NAME_HIGH = 0x98dcb1a1c610092f8ddbd78467f948b9
+
+#  keccak256("1");
+const CHANGE_PUBKEY_HASHED_VERSION_LOW = 0xf5a951637e0307cdcb4c672f298b8bc6
+const CHANGE_PUBKEY_HASHED_VERSION_HIGH = 0xc89efdaa54c0f20c7adf612882df0950
+
+# keccak256("ChangePubKey(bytes20 pubKeyHash,uint32 nonce,uint32 accountId)");
+const CHANGE_PUBKEY_TYPE_HASH_LOW = 0x0621f39392101b34fba2ecd141432580b
+const CHANGE_PUBKEY_TYPE_HASH_HIGH = 0x8012078cc90c4c82e493f1a538159fd8

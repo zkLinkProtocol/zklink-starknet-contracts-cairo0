@@ -11,26 +11,41 @@ from starkware.cairo.common.cairo_builtins import (
     BitwiseBuiltin
 )
 from starkware.cairo.common.math import assert_not_equal, assert_nn_le, unsigned_div_rem
-from starkware.cairo.common.math_cmp import is_not_zero, is_le
+from starkware.cairo.common.math_cmp import is_not_zero, is_le, is_nn
 from starkware.cairo.common.pow import pow
+from starkware.cairo.common.default_dict import default_dict_new, default_dict_finalize
+from starkware.cairo.common.dict import dict_write, dict_read, dict_update
+from starkware.cairo.common.dict_access import DictAccess
+from starkware.cairo.common.squash_dict import squash_dict
 
 from starkware.starknet.common.syscalls import (
     get_block_number,
     get_caller_address,
-    get_block_timestamp
+    get_block_timestamp,
+    get_tx_info
 )
 
-from contracts.utls.Bytes import split_bytes
+from contracts.utils.Bytes import (
+    Bytes,
+    read_felt,
+    read_uint256,
+    read_bytes,
+    FELT_MAX_BYTES,
+    split_bytes,
+    create_empty_bytes
+)
 from contracts.utils.Operations import (
-    OPERATIONS_OPTYPE_DEPOSIT,
-    OPERATIONS_OPTYPE_FULL_EXIT,
+    OpType,
     PriorityOperation,
     DepositOperation,
     FullExit,
     convert_deposit_operation_to_array,
     convert_fullexit_operation_to_array,
     read_deposit_pubdata,
-    check_priority_operation,
+    check_deposit_with_priority_operation,
+    read_fullexit_pubdata,
+    check_fullexit_with_priority_operation,
+    ChangePubKey,
     read_changepubkey_pubdata
 )
 
@@ -40,7 +55,8 @@ from contracts.utils.Utils import (
     felt_to_uint256,
     uint256_to_felt,
     min_felt,
-    slice_public_data
+    concat_hash,
+    concat_two_hash
 )
 
 from contracts.utils.Config import (
@@ -61,7 +77,6 @@ from contracts.utils.Config import (
     MAX_CHAIN_ID,
     ALL_CHAINS,
     CHUNK_BYTES,
-    PUBLIC_DATA_ELEMENT_BYTES,
     DEPOSIT_BYTES,
     FULL_EXIT_BYTES,
     WITHDRAW_BYTES,
@@ -79,26 +94,30 @@ from contracts.utils.Storage import (
     get_token_id,
     get_token,
     get_total_open_priority_requests,
-    total_committed_priority_requests,
+    get_total_committed_priority_requests,
+    add_total_committed_priority_requests,
     get_chain_id,
     get_first_priority_request_id,
     set_priority_request,
     only_delegate_call,
     StoredBlockInfo,
-    get_block_hash,
-    store_block_hash,
+    parse_stored_block_info,
+    get_storedBlockHashes,
+    add_storedBlockHashes,
     convert_stored_block_info_to_array,
     get_pending_balance,
     add_pending_balance,
     active,
     only_validator,
     get_total_blocks_committed,
-    get_priority_requests
+    get_priority_requests,
+    get_auth_facts
 )
 
 from contracts.utils.Events import (
     new_priority_request,
-    with_draw
+    with_draw,
+    block_commit
 )
 
 from contracts.utils.ReentrancyGuard import (
@@ -120,38 +139,109 @@ end
 # Struct section
 #
 
+struct ChangePubkeyType:
+    member ECRECOVER : felt
+    member CREATE2 : felt
+end
+
 # Data needed to process onchain operation from block public data.
 # Onchain operations is operations that need some processing on L1: Deposits, Withdrawals, ChangePubKey.
 struct OnchainOperationData:
-    member eth_witness : felt          # ethWitness Some external data that can be needed for operation processing
-    member public_data_offset : felt   # offset in public data for onchain operation
+    member public_data_offset : felt    # offset in public data for onchain operation
+    member eth_witness : Bytes          # ethWitness Some external data that can be needed for operation processing
+end
+
+func parse_onchain_operations_data{range_check_ptr}(
+    bytes : Bytes,
+    _offset : felt,
+    size : felt
+) -> (new_offset : felt, res : OnchainOperationData*):
+    alloc_locals
+    let (local onchain_operations : OnchainOperationData*) = alloc()
+    let (new_offset) = parse_onchain_operation_data(bytes, _offset, size - 1, onchain_operations)
+    return (new_offset, onchain_operations)
+end
+
+func parse_onchain_operation_data{range_check_ptr}(
+    bytes : Bytes,
+    _offset : felt,
+    index : felt,
+    onchain_operations : OnchainOperationData*
+) -> (new_offset):
+    if index == -1:
+        return (_offset)
+    let (offset) = parse_onchain_operation_data(bytes, _offset, index - 1, onchain_operations)
+    let (offset, sub_size) = read_felt(bytes, offset, 4)
+    let (offset, public_data_offset) = read_felt(bytes, offset, 4)
+    let (offset, eth_witness) = read_bytes(bytes, offset, sub_size)
+    assert onchain_operations[index] = OnchainOperationData(
+        public_data_offset=public_data_offset,
+        eth_witness=eth_witness
+    )
+    return (offset)
 end
 
 # Data needed to commit new block
 struct CommitBlockInfo:
-    member new_state_hash : felt
-    member public_data_size : felt      # all public data elememt size summary
-    member public_data_len : felt       # public data array size
-    member public_data : felt*          # public data store in an array of felt
-    member timestamp : felt
-    member onchain_operations_len : felt
-    member onchain_operations : OnchainOperationData*
+    member new_state_hash : Uint256
+    member timestamp : Uint256
     member block_number : felt
     member fee_account : felt
+    member public_data : Bytes
+    member onchain_operations_size : felt               # uint32
+    member onchain_operations : OnchainOperationData*
+end
+
+func CommitBlockInfo_new() -> (res : CommitBlockInfo):
+    alloc_locals()
+    let (public_data : Bytes) = create_empty_bytes()
+    let (onchain_operations : OnchainOperationData*) = alloc()
+    return (
+        CommitBlockInfo(
+            new_state_hash=Uint256(0, 0),
+            timestamp=Uint256(0, 0),
+            block_number=0,
+            fee_account=0,
+            public_data=public_data,
+            onchain_operations_size=0,
+            onchain_operations=onchain_operations
+        )
+    )
+end
+
+func parse_commit_block_info{range_check_ptr}(bytes : Bytes, _offset : felt) -> (new_offset : felt, res : CommitBlockInfo):
+    let (offset, new_state_hash : Uint256) = read_uint256(bytes, _offset)
+    let (offset, timestamp : Uint256) = read_uint256(bytes, offset)
+    let (offset, block_number) = read_felt(bytes, offset, 4)
+    let (offset, fee_account) = read_felt(bytes, offset, 4)
+    let (offset, pub_data_size) = read_felt(bytes, offset, 4)
+    let (offset, public_data : Bytes) = read_bytes(bytes, offset, pub_data_size)
+    let (offset, onchain_operations_size) = read_felt(bytes, offset, 4)
+    let (offset, onchain_operations : OnchainOperationData*) = parse_onchain_operations_data(bytes, offset, onchain_operations_size)
+
+    return (offset, CommitBlockInfo(
+        new_state_hash=new_state_hash,
+        timestamp=timestamp,
+        block_number=block_number,
+        fee_account=fee_account,
+        public_data=public_data,
+        onchain_operations_size=onchain_operations_size,
+        onchain_operations=onchain_operations
+    ))
 end
 
 struct CompressedBlockExtraInfo:
-    member public_data_hash : felt                      # pubdata hash of all chains
-    member offset_commitment_hash : felt                # all chains pubdata offset commitment hash
-    member onchain_operation_pubdata_hash_len : felt    # array length of onchain_operation_pubdata_hashs
-    member onchain_operation_pubdata_hashs : felt*      # onchain operation pubdata hash of the all other chains
+    member public_data_hash : Uint256                       # pubdata hash of all chains
+    member offset_commitment_hash : Uint256                 # all chains pubdata offset commitment hash
+    member onchain_operation_pubdata_hash_len : felt        # array length of onchain_operation_pubdata_hashs
+    member onchain_operation_pubdata_hashs : Uint256*       # onchain operation pubdata hash of the all other chains
 end
 
 # Data needed to execute committed and verified block
 struct ExecuteBlockInfo:
     member stored_block : StoredBlockInfo
     member pending_onchain_ops_pubdata_len : felt
-    member pending_onchain_ops_pubdata : felt*
+    member pending_onchain_ops_pubdata : Bytes*
 end
 
 #
@@ -469,15 +559,24 @@ end
 
 # Commit block
 @external
-func commit_blocks{
+func commit_block{
     syscall_ptr : felt*,
     pedersen_ptr : HashBuiltin*,
     bitwise_ptr : BitwiseBuiltin*,
     range_check_ptr
-}(last_committed_block_data : StoredBlockInfo, new_blocks_data_len : felt, new_blocks_data : CommitBlockInfo*):
-    alloc_locals
-    let (local new_blocks_extra_data : CompressedBlockExtraInfo*) = alloc()
+}(size : felt, data_len : felt, data : felt*):
+    tempvar bytes = Bytes(
+        _start=0,
+        bytes_per_felt=FELT_MAX_BYTES,
+        size=size,
+        data_length=data_len,
+        data=data
+    )
+    let (offset, _lastCommittedBlockData : StoredBlockInfo) = parse_stored_block_info(bytes, 0)
+    let (_, _newBlocksData : CommitBlockInfo) = parse_commit_block_info(bytes, offset)
+    let (_newBlockExtraData : CompressedBlockExtraInfo)= CommitBlockInfo_new()
 
+    _commit_block(_lastCommittedBlockData, new_block_data, false, _newBlockExtraData)
 end
 
 
@@ -585,18 +684,16 @@ func add_priority_request{
     return ()
 end
 
-func _commit_blocks{
+func _commit_block{
     syscall_ptr : felt*,
     pedersen_ptr : HashBuiltin*,
     bitwise_ptr : BitwiseBuiltin*,
     range_check_ptr
 }(
-    last_committed_block_data : StoredBlockInfo,
-    new_blocks_data_len : felt,
-    new_blocks_data : CommitBlockInfo*,
+    _lastCommittedBlockData : StoredBlockInfo,
+    _newBlocksData : CommitBlockInfo,
     compressed : felt,
-    new_blocks_extra_data_len : felt,
-    new_blocks_extra_data : CompressedBlockExtraInfo*
+    _newBlocksExtraData : CompressedBlockExtraInfo
 ):
     # Lock with reentrancy_guard
     reentrancy_guard_lock()
@@ -606,21 +703,33 @@ func _commit_blocks{
     only_validator()
 
     # Checks
-    with_attr error_message("f0"):
-        assert_nn(new_blocks_data_len)
-        assert_nn(new_blocks_extra_data_len)
-        assert new_blocks_data_len = new_blocks_extra_data_len
-    end
-    let (total_blocks_committed) = get_total_blocks_committed()
-    let (stored_block_hash : Uint256) = get_block_hash(total_blocks_committed)
-    let (n_elements : felt, elements : felt*) = convert_stored_block_info_to_array(last_committed_block_data)
-    let (last_committed_block_hash : Uint256) = hash_array_to_uint256(n_elements, elements)
+    # Check that we commit blocks after last committed block
     with_attr error_message("f1"):
-        assert uint256_eq(stored_block_hash, last_committed_block_hash) = 1
+        let (total_blocks_committed) = get_total_blocks_committed()
+        let (old_stored_block_hash : Uint256) = get_storedBlockHashes(total_blocks_committed)
+
+        let (n_elements : felt, elements : felt*) = convert_stored_block_info_to_array(_lastCommittedBlockData)
+        let (last_committed_block_hash : Uint256) = hash_array_to_uint256(n_elements, elements)
+
+        assert uint256_eq(old_stored_block_hash, last_committed_block_hash) = 1
     end
 
     # Effects
+    let (_lastCommittedBlockData) = commit_one_block(_lastCommittedBlockData, _newBlocksData, compressed, _newBlocksExtraData)
+    add_total_committed_priority_requests(_lastCommittedBlockData.priority_operations)
+    let (n_elements : felt, elements : felt*) = convert_stored_block_info_to_array(_lastCommittedBlockData)
+    let (new_stored_block_hash : Uint256) = hash_array_to_uint256(n_elements, elements)
+    add_storedBlockHashes(_lastCommittedBlockData.block_number, new_stored_block_hash)
 
+
+    with_attr error_message("f2"):
+        let (total_committed_priority_requests) = get_total_committed_priority_requests()
+        let (total_open_priority_requests) = get_total_open_priority_requests()
+
+        assert_nn_le(total_committed_priority_requests, total_open_priority_requests)
+    end
+
+    block_number.emit(_lastCommittedBlockData.block_number)
 
     # Unlock
     reentrancy_guard_unlock()
@@ -635,34 +744,105 @@ func commit_one_block{
     bitwise_ptr : BitwiseBuiltin*,
     range_check_ptr
 }(
-    previous_block : StoredBlockInfo,
-    new_block : CommitBlockInfo,
-    compressed : felt,
-    new_block_extra : CompressedBlockExtraInfo
+    _previousBlock : StoredBlockInfo,
+    _newBlock : CommitBlockInfo,
+    _compressed : felt,
+    _newBlockExtra : CompressedBlockExtraInfo
 ) -> (stored_new_block : StoredBlockInfo):
     # Checks
     with_attr error_message("g0"):
-        assert new_block.block_number - previous_block.block_number = 1
+        assert _newBlock.block_number - _previousBlock.block_number = 1
     end
     with_attr error_message("g1"):
         if ENABLE_COMMIT_COMPRESSED_BLOCK == 0:
-            assert compressed = 0
+            assert _compressed = 0
         end
     end
 
     # Check timestamp of new block
     with_attr error_message("g2"):
-        assert_nn_le(previous_block.timestamp, new_block.timestamp)
+        assert_nn_le(_previousBlock.timestamp, _newBlock.timestamp)
     end
     # MUST be in a range of [block.timestamp - COMMIT_TIMESTAMP_NOT_OLDER, block.timestamp + COMMIT_TIMESTAMP_APPROXIMATION_DELTA]
     let (current_block_timestamp) = get_block_timestamp()
     with_attr error_message("g3"):
-        assert_nn_le(current_block_timestamp - COMMIT_TIMESTAMP_NOT_OLDER, new_block.timestamp)
-        assert_nn_le(new_block.timestamp, current_block_timestamp + COMMIT_TIMESTAMP_APPROXIMATION_DELTA)
+        assert_nn_le(current_block_timestamp - COMMIT_TIMESTAMP_NOT_OLDER, _newBlock.timestamp)
+        assert_nn_le(_newBlock.timestamp, current_block_timestamp + COMMIT_TIMESTAMP_APPROXIMATION_DELTA)
     end
 
     # Check onchain operations
+    let (
+        pendingOnchainOpsHash : Uint256,
+        priorityReqCommitted,
+        onchainOpsOffsetCommitment,
+        onchainOperationPubdataHashs : DictAccess*
+    ) = collect_onchain_ops(_newBlock)
 
+    # Create synchronization hash for cross chain block verify
+    let (commitment) = createBlockCommitment(_previousBlock, _newBlock, _compressed, _newBlockExtra, onchainOpsOffsetCommitment)
+
+    # Create synchronization hash for cross chain block verify
+    if _compressed == 1:
+        create_sync_hashs(onchainOperationPubdataHashs, _newBlockExtra.onchainOperationPubdataHashs, MAX_CHAIN_ID)
+    end
+
+    let (syncHash : Uint256) = create_sync_hash(commitment, onchainOperationPubdataHashs)
+    return (
+        StoredBlockInfo(
+            block_number=_newBlock.block_number,
+            priority_operations=priorityReqCommitted,
+            pending_onchain_operations_hash=pendingOnchainOpsHash,
+            timestamp=_newBlock.timestamp,
+            state_hash=_newBlock.new_state_hash,
+            commitment=commitment,
+            sync_hash=syncHash
+        )
+    )
+end
+
+func create_sync_hashs{
+    range_check_ptr,
+    bitwise_ptr : BitwiseBuiltin*
+}(dict : DictAccess*, onchainOperationPubdataHashs : Uint256*, i : felt):
+    if i == MIN_CHAIN_ID - 1:
+        return ()
+    end
+
+    create_sync_hashs(dict, onchainOperationPubdataHashs, index - 1)
+    let (not_eq) = is_not_zero(i, CHAIN_ID)
+    if not_eq == 1:
+        dict_update{dict_ptr=dict}(key=i, new_value=onchainOperationPubdataHashs[i])
+    end
+end
+
+# Create synchronization hash for cross chain block verify
+func create_sync_hash{
+    range_check_ptr, 
+    bitwise_ptr : BitwiseBuiltin*
+}(commitment : Uint256, onchainOperationPubdataHashs : DictAccess*) -> (syncHash : Uint256):
+    let (syncHash : Uint256) = _create_sync_hash(commitment, onchainOperationPubdataHashs, MAX_CHAIN_ID)
+    return (syncHash)
+end
+
+func _create_sync_hash{
+    range_check_ptr, 
+    bitwise_ptr : BitwiseBuiltin*
+}(commitment : Uint256, onchainOperationPubdataHashs : DictAccess*, i : felt) -> (syncHash : Uint256):
+    if i == MIN_CHAIN_ID - 1:
+        return (commitment)
+    end
+
+    let (before_commitment) = _create_sync_hash(commitment, onchainOperationPubdataHashs, i - 1)
+    let (chainIndex_plus_1) = pow(2, i)
+    tempvar chainIndex = chainIndex_plus_1 - 1
+    let chainIndex_and_ALL_CHAINS = bitwise_and(chainIndex, ALL_CHAINS)
+    if chainIndex_and_ALL_CHAINS == chainIndex:
+        let (hash : Uint256) = dict_read{dict_ptr=onchainOperationPubdataHashs}(key=i)
+        let (syncHash) = = concat_two_hash(before_commitment, hash)
+        return (syncHash)
+    else:
+        return (before_commitment)
+    end
 end
 
 # Gets operations packed in bytes array. Unpacks it and stores onchain operations.
@@ -677,29 +857,37 @@ func collect_onchain_ops{
     processable_operations_hash : Uint256,
     priority_operations_processed : felt,
     offsets_commitment : felt,
-    onchain_operation_pubdata_hash_len : felt,
-    onchain_operation_pubdata_hashs : Uint256*
+    onchain_operation_pubdata_hashs : DictAccess*
 ):
     alloc_locals
     let pub_data = new_block_data.public_data
-    let pub_data_size = new_block_data.public_data_size
 
-    let (offsets_commitmemt, rem) = unsigned_div_rem(pub_data_size, CHUNK_BYTES)
+    let (offsets_commitmemt_size, rem) = unsigned_div_rem(pub_data.size, CHUNK_BYTES)
     with_attr error_message("h0"):
         assert rem = 0
     end
 
-
-    
     # overflow is impossible
     let (first_priority_request_id) = get_first_priority_request_id()
     let (total_committed_priority_requests) = total_committed_priority_requests()
     tempvar uncommitted_priority_requests_offset = first_priority_request_id + total_committed_priority_requests
 
-    let (onchain_operation_pubdata_hashs : Uint256*) = init_onchain_operation_pubdata_hashs()
-    let (processable_operations_hash) = Uint256(EMPTY_STRING_KECCAK_LOW, EMPTY_STRING_KECCAK_HIGH)
+    let (onchain_operation_pubdata_hashs : DictAccess*) = init_onchain_operation_pubdata_hashs()
 
-
+    # loop
+    let (
+        offsets_commitmemt,
+        priority_operations_processed,
+        processable_operations_hash : Uint256
+    ) = _collect_onchain_ops(
+        pub_data,
+        new_block_data.onchain_operations,
+        new_block_data.onchain_operations_size - 1,
+        0,
+        uncommitted_priority_requests_offset,
+        onchain_operation_pubdata_hashs
+    )
+    return (processable_operations_hash, priority_operations_processed, offsets_commitmemt, onchain_operation_pubdata_hashs)
 end
 
 func _collect_onchain_ops{
@@ -708,32 +896,36 @@ func _collect_onchain_ops{
     bitwise_ptr : BitwiseBuiltin*,
     range_check_ptr
 }(
-    _pub_data : felt*,
+    _pub_data : Bytes,
     onchain_op_data : OnchainOperationData*,
     index : felt,
-    pub_data_size : felt,
     _offsets_commitmemt : felt,
     _uncommitted_priority_requests_offset : felt,
-    _priority_operations_processed : felt
-) -> (offsets_commitmemt : felt, priority_operations_processed : felt):
-    if is_le(-1) == 1:
-        return ()
+    onchain_operation_pubdata_hashs : DictAccess*
+) -> (
+    offsets_commitmemt : felt,
+    priority_operations_processed : felt,
+    processable_operations_hash : Uint256
+):
+    if index == -1:
+        return (_offsets_commitmemt, 0, Uint256(EMPTY_STRING_KECCAK_LOW, EMPTY_STRING_KECCAK_HIGH))
     end
     let (
         before_offsets_commitmemt,
-        before_priority_operations_processed
+        before_priority_operations_processed,
+        before_processable_operations_hash
     ) = _collect_onchain_ops(
-        pub_data,
-        onchain_op_data=onchain_op_data + 1,
+        _pub_data,
+        onchain_op_data=onchain_op_data,
         index = index - 1,
-        pub_data_size,
-        _offsets_commitmemt)
+        _offsets_commitmemt
+    )
 
-    tempvar pubdata_offset = onchain_op_data.public_data_offset
+    tempvar pubdata_offset = onchain_op_data[index].public_data_offset
     with_attr error_message("h1"):
-        assert_nn_le(pubdata_offset + 1, pub_data_size)
+        assert_nn_le(pubdata_offset + 1, _pub_data.size)
     end
-    let (chunk_id, rem) = unsigned_div_rem(pubdata_offset, pub_data_size)
+    let (chunk_id, rem) = unsigned_div_rem(pubdata_offset, CHUNK_BYTES)
     with_attr error_message("h2"):
         assert rem = 0
     end
@@ -745,17 +937,26 @@ func _collect_onchain_ops{
     end
     let (offsets_commitmemt) = bitwise_or(x, before_offsets_commitmemt)
 
-    let (pubdata_index, _) = unsigned_div_rem(pubdata_offset, PUBLIC_DATA_ELEMENT_BYTES)
-    let pub_data = _pub_data[pubdata_index]
-    let chain_id = split_bytes(PUBLIC_DATA_ELEMENT_BYTES, pub_data, 1, 1)
+    let chain_id = read_felt(_pub_data, pubdata_offset + 1, 1)
     check_chain_id(chain_id)
 
-    let op_type = split_bytes(PUBLIC_DATA_ELEMENT_BYTES, pub_data, 0, 1)
+    let op_type = read_felt(_pub_data, pubdata_offset, 1)
     let next_priority_op_index = _uncommitted_priority_requests_offset + before_priority_operations_processed
 
-
-    let next
-
+    let (newPriorityProceeded, opPubData : Bytes, processablePubData : Bytes) = check_onchain_op(
+        op_type, chain_id, _pub_data, pubdata_offset, next_priority_op_index, onchain_op_data[index].ethWitness
+    )
+    let priority_operations_processed = before_priority_operations_processed + newPriorityProceeded
+    let (old_onchain_operation_pubdata_hash : Uint256) = dict_read{dict_ptr=onchain_operation_pubdata_hashs}(key=chain_id)
+    let (new_onchain_operation_pubdata_hash : Uint256) = concat_hash(old_onchain_operation_pubdata_hash, opPubData)
+    dict_update{dict_ptr=onchain_operation_pubdata_hashs}(key=chain_id, new_value=new_onchain_operation_pubdata_hash)
+    let has_processable_pubdata = is_nn(processablePubData.size - 1)
+    if has_processable_pubdata == 1:
+        let (processable_operations_hash : Uint256) = concat_hash(before_processable_operations_hash, processablePubData)
+        return (offsets_commitmemt, priority_operations_processed, processable_operations_hash)
+    else:
+        return (offsets_commitmemt, priority_operations_processed, before_processable_operations_hash)
+    end
 end
 
 func init_onchain_operation_pubdata_hashs{
@@ -763,9 +964,15 @@ func init_onchain_operation_pubdata_hashs{
     pedersen_ptr : HashBuiltin*,
     bitwise_ptr : BitwiseBuiltin*,
     range_check_ptr
-}() -> (onchain_operation_pubdata_hashs : Uint256*):
+}() -> (onchain_operation_pubdata_hashs : DictAccess*):
     alloc_locals
-    let (local onchain_operation_pubdata_hashs : Uint256*) = alloc()
+    tempvar initial_value = Uint256(0, 0)
+    let (local onchain_operation_pubdata_hashs : DictAccess*) = default_dict_new(default_value=initial_value)
+    default_dict_finalize(
+        dict_accesses_start=onchain_operation_pubdata_hashs,
+        dict_accesses_end=dict_accesses_end,
+        default_value=initial_value
+    )
     _init_onchain_operation_pubdata_hash(onchain_operation_pubdata_hashs, MAX_CHAIN_ID)
     return (onchain_operation_pubdata_hashs)
 end
@@ -775,19 +982,19 @@ func _init_onchain_operation_pubdata_hash{
     pedersen_ptr : HashBuiltin*,
     bitwise_ptr : BitwiseBuiltin*,
     range_check_ptr
-}(hashs : Uint256*, i : felt) -> ():
+}(hashs : DictAccess*, i : felt) -> ():
     if i == MIN_CHAIN_ID - 1:
         return ()
     end
 
-    _init_onchain_operation_pubdata_hash(hashs=hashs + 1, i=i - 1)
+    _init_onchain_operation_pubdata_hash(hashs=hashs, i=i - 1)
 
     let (chain_index_plus_1) = pow(2, i)
-    let chain_index = chain_index_plus_1 - 1
+    tempvar chain_index = chain_index_plus_1 - 1
 
     let (res) = bitwise_and(chain_index, ALL_CHAINS)
     if res == chain_index:
-        assert hashs[0] = Uint256(EMPTY_STRING_KECCAK_LOW, EMPTY_STRING_KECCAK_HIGH)
+        dict_write{dict_ptr=hashs}(key=i, new_value=Uint256(EMPTY_STRING_KECCAK_LOW, EMPTY_STRING_KECCAK_HIGH))
     end
     return ()
 end
@@ -807,53 +1014,116 @@ end
 
 func check_onchain_op{
     range_check_ptr,
+    bitwise_ptr : BitwiseBuiltin*
 }(
     op_type : felt,
     chain_id : felt,
-    pub_data : felt*,
-    pubdata_index : felt,
-    element_offset : felt,
+    pub_data : Bytes,
+    public_data_offset : felt,
     next_priority_op_index : felt,
-    eth_witness : felt
+    eth_witness : Bytes
 ) -> (
     priority_operations_processed : felt,
-    op_pubdata : felt,
-    processable_pubdata : felt
+    op_pubdata : Bytes,
+    processable_pubdata : Bytes
 ):
+    alloc_locals
+    let (local empty_bytes : Bytes) = create_empty_bytes()
     # ignore check if ops are not part of the current chain
-    if op_type = OPERATIONS_OPTYPE_DEPOSIT:
-        let (op_pubdata : felt*) = slice_public_data(pubdata, pubdata_index, DEPOSIT_BYTES)
+    if op_type == OpType.Deposit:
+        let (op_pubdata : Bytes) = read_bytes(pub_data, public_data_offset, DEPOSIT_BYTES)
         if chain_id == CHAIN_ID:
             let (op : DepositOperation) = read_deposit_pubdata(op_pubdata)
             let (pop : PriorityOperation) = get_priority_requests(next_priority_op_index)
-            check_priority_operation(op, pop)
-            return (priority_operations_processed=1, op_pubdata=op_pubdata, processable_pubdata=0)
+            check_deposit_with_priority_operation(op, pop)
+            let (processable_pubdata : Bytes) = read_bytes(op_pubdata, 0, op_pubdata.size)
+            return (priority_operations_processed=1, op_pubdata=op_pubdata, processable_pubdata=processable_pubdata)
         end
     else:
-        if op_type == OPERATIONS_OPTYPE_CHANGE_PUBKEY:
-            let (op_pubdata : felt*) = slice_public_data(pubdata, pubdata_index, CHANGE_PUBKEY_BYTES)
+        if op_type == OpType.ChangePubKey:
+            let (op_pubdata : Bytes) = read_bytes(pub_data, public_data_offset, CHANGE_PUBKEY_BYTES)
             if chain_id == CHAIN_ID:
                 let (op : ChangePubKey) = read_changepubkey_pubdata(op_pubdata)
-                if eth_witness == 0 :
-                    let (hash) = 
+                let (processable_pubdata : Bytes) = read_bytes(op_pubdata, 0, op_pubdata.size)
+                if eth_witness.size == 0 :
+                    let (af : Uint256) = get_auth_facts((op.owner, op.nonce))
+                    # TODO: keccak
+                    return (priority_operations_processed=0, op_pubdata=op_pubdata, processable_pubdata=processable_pubdata)
                 else:
-
+                    let (valid) = verify_changepubkey(eth_witness, op)
+                    with_attr error_message("k0"):
+                        assert valid = 1
+                    end
+                    return (priority_operations_processed=0, op_pubdata=op_pubdata, processable_pubdata=processable_pubdata)
                 end
             end
         else:
-            if op_type == OPERATIONS_OPTYPE_WITHDRAW:
-
+            if op_type == OpType.Withdraw:
+                let (op_pubdata : Bytes) = read_bytes(pub_data, public_data_offset, WITHDRAW_BYTES)
+                return (priority_operations_processed=0, op_pubdata=op_pubdata, processable_pubdata=empty_bytes)
             else:
-                if op_type == OPERATIONS_OPTYPE_FORCE_EXIT:
-
+                if op_type == OpType.ForcedExit:
+                    let (op_pubdata : Bytes) = read_bytes(pub_data, public_data_offset, FORCED_EXIT_BYTES)
+                    return (priority_operations_processed=0, op_pubdata=op_pubdata, processable_pubdata=empty_bytes)
                 else:
-                    if op_type == OPERATIONS_OPTYPE_FULL_EXIT:
-
+                    if op_type == OpType.FullExit:
+                        let (op_pubdata : Bytes) = read_bytes(pub_data, public_data_offset, FULL_EXIT_BYTES)
+                        if chain_id == CHAIN_ID:
+                            let (op : FullExit) = read_fullexit_pubdata(op_pubdata)
+                            let (pop : PriorityOperation) = get_priority_requests(next_priority_op_index)
+                            check_fullexit_with_priority_operation(op, pop)
+                            let (processable_pubdata : Bytes) = read_bytes(op_pubdata, 0, op_pubdata.size)
+                            return (priority_operations_processed=1, op_pubdata=op_pubdata, processable_pubdata=processable_pubdata)
+                        end
                     else:
-                        # TODO
+                        # TODO:  revert("k2")
                     end
                 end
             end
         end
     end
+end
+
+# Checks that change operation is correct
+# True return 1, False return 0
+func verify_changepubkey{range_check_ptr, bitwise_ptr : BitwiseBuiltin*}(eth_witness : Bytes, change_pk : ChangePubKey) -> (res : felt):
+    let (changePkType) = read_felt(eth_witness, 0, 1)
+    if changePkType == ChangePubkeyType.ECRECOVER:
+        let (res_ECRECOVER) = verify_changepubkey_ECRECOVERP(eth_witness, change_pk)
+        return (res_ECRECOVER)
+    else:
+        let (res_CREATE2) = verify_changepubkey_CREATE2(eth_witness, change_pk)
+        return (res_CREATE2)
+    end
+end
+
+func verify_changepubkey_ECRECOVERP{range_check_ptr, bitwise_ptr : BitwiseBuiltin*}(eth_witness : Bytes,change_pk : ChangePubKey) -> (res : felt):
+    # offset is 1 because we skip type of ChangePubkey
+    let (_, signature : Bytes) = read_bytes(eth_witness, 1, 65)
+    let (tx_info) = get_tx_info()
+    tempvar cid = tx_info.chain_id
+    
+    # TODO: keccak
+
+    return (1)
+end
+
+func verify_changepubkey_CREATE2{range_check_ptr, bitwise_ptr : BitwiseBuiltin*}(eth_witness : Bytes,change_pk : ChangePubKey) -> (res : felt):
+    
+    # TODO: keccak
+
+    return (1)
+end
+
+# Creates block commitment from its data
+# offsetCommitment - hash of the array where 1 is stored in chunk where onchainOperation begins and 0 for other chunks
+func createBlockCommitment{range_check_ptr}(
+    _previousBlock : StoredBlockInfo,
+    _newBlockData : CommitBlockInfo,
+    _compressed : felt,
+    _newBlockExtraData : CompressedBlockExtraInfo,
+    offsetsCommitment : felt
+) -> (commitment : Uint256):
+    # TODO: sha256
+    return Uint256(0, 0)
 end

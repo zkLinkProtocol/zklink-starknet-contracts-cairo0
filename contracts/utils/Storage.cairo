@@ -8,6 +8,7 @@ from starkware.starknet.common.syscalls import get_contract_address, get_caller_
 from starkware.cairo.common.uint256 import Uint256
 
 from contracts.utils.Operations import PriorityOperation
+from contracts.utils.Bytes import Bytes, read_felt, read_uint256
 
 # Indicates that exodus (mass exit) mode is triggered.
 # Once it was raised, it can not be cleared again, and all users must exit
@@ -142,13 +143,23 @@ func total_committed_priority_requests() -> (requests : felt):
 end
 
 @view
-func get_total_open_priority_requests{
+func get_total_committed_priority_requests{
     syscall_ptr : felt*,
     pedersen_ptr : HashBuiltin*,
     range_check_ptr
 }() -> (requests : felt):
     let (requests) = total_committed_priority_requests.read()
     return (requests=requests)
+end
+
+func add_total_committed_priority_requests{
+    syscall_ptr : felt*,
+    pedersen_ptr : HashBuiltin*,
+    range_check_ptr
+}(amount : felt):
+    let (old_total_committed_priority_requests) = get_total_committed_priority_requests()
+    total_committed_priority_requests.write(old_total_committed_priority_requests + amount)
+    return ()
 end
 
 # Priority Requests mapping (request id - operation)
@@ -359,13 +370,33 @@ func get_total_blocks_committed{
 end
 
 struct StoredBlockInfo:
-    member block_number : felt                      # Rollup block number
-    member priority_operations : felt               # Number of priority operations processed
-    member pending_onchain_operations_hash : felt   # Hash of all operations that must be processed after verify
-    member timestamp : felt                         # Rollup block timestamp, have the same format as Ethereum block constant
-    member state_hash : felt                        # Root hash of the rollup state
-    member commitment : felt                        # Verified input for the ZkLink circuit
-    member sync_hash : felt                         # Used for cross chain block verify
+    member block_number : felt                          # uint32, Rollup block number
+    member priority_operations : felt                   # uint64, Number of priority operations processed
+    member pending_onchain_operations_hash : Uint256    # bytes32, Hash of all operations that must be processed after verify
+    member timestamp : Uint256                          # uint256, Rollup block timestamp, have the same format as Ethereum block constant
+    member state_hash : Uint256                         # bytes32, Root hash of the rollup state
+    member commitment : Uint256                         # bytes32, Verified input for the ZkLink circuit
+    member sync_hash : Uint256                          # bytes32, Used for cross chain block verify
+end
+
+func parse_stored_block_info{range_check_ptr}(bytes : Bytes, _offset : felt) -> (new_offset : felt, res : StoredBlockInfo):
+    let (offset, block_number) = read_felt(bytes, _offset, 4)
+    let (offset, priority_operations) = read_felt(bytes, offset, 8)
+    let (offset, pending_onchain_operations_hash : Uint256) = read_uint256(bytes, offset)
+    let (offset, timestamp : Uint256) = read_uint256(bytes, offset)
+    let (offset, state_hash : Uint256) = read_uint256(bytes, offset)
+    let (offset, commitment : Uint256) = read_uint256(bytes, offset)
+    let (offset, sync_hash : Uint256) = read_uint256(bytes, offset)
+
+    return (offset, StoredBlockInfo(
+        block_number=block_number,
+        priority_operations=priority_operations,
+        pending_onchain_operations_hash=pending_onchain_operations_hash,
+        timestamp=timestamp,
+        state_hash=state_hash,
+        commitment=commitment,
+        sync_hash=sync_hash
+    ))
 end
 
 func convert_stored_block_info_to_array(data : StoredBlockInfo) -> (n_elements : felt, elements : felt*):
@@ -386,25 +417,25 @@ end
 
 # Stored hashed StoredBlockInfo for some block number
 @storage_var
-func stored_block_hashes(block_id : felt) -> (hash : Uint256):
+func storedBlockHashes(block_id : felt) -> (hash : Uint256):
 end
 
 @view
-func get_block_hash{
+func get_storedBlockHashes{
     syscall_ptr : felt*,
     pedersen_ptr : HashBuiltin*,
     range_check_ptr
 }(block_id : felt) -> (hash : Uint256):
-    let (hash : Uint256) = stored_block_hashes.read(block_id)
+    let (hash : Uint256) = storedBlockHashes.read(block_id)
     return (hash)
 end
 
-func store_block_hash{
+func add_storedBlockHashes{
     syscall_ptr : felt*,
     pedersen_ptr : HashBuiltin*,
     range_check_ptr
 }(block_id : felt, hash : Uint256):
-    stored_block_hashes.write(block_id, hash)
+    storedBlockHashes.write(block_id, hash)
     return ()
 end
 
@@ -432,4 +463,25 @@ func add_pending_balance{
     return ()
 end
 
-func 
+@storage_var
+func auth_facts(owner_and_nonce : (felt, felt)) -> (res : Uint256):
+end
+
+@view
+func get_auth_facts{
+    syscall_ptr : felt*,
+    pedersen_ptr : HashBuiltin*,
+    range_check_ptr
+}(owner_and_nonce : (felt, felt)) -> (res : Uint256):
+    let (res) = auth_facts.read(owner_and_nonce)
+    return (res)
+end
+
+func add_auth_facts{
+    syscall_ptr : felt*,
+    pedersen_ptr : HashBuiltin*,
+    range_check_ptr
+}(owner_and_nonce : (felt, felt), res : Uint256):
+    auth_facts.write(owner_and_nonce, res)
+    return ()
+end
