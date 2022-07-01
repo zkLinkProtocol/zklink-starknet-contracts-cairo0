@@ -75,6 +75,11 @@ func concat_hash{range_check_ptr, bitwise_ptr : BitwiseBuiltin*}(_hash : Uint256
     return (Uint256(0, 0))
 end
 
+func concat_two_hash{range_check_ptr, bitwise_ptr : BitwiseBuiltin*}(a : Uint256, b : Uint256) -> (res : Uint256):
+    # TODO : keccak
+    return (Uint256(0, 0))
+end
+
 # # read element in pubdata
 # # pubdata : array of felt, and every felt has PUBLIC_DATA_ELEMENT_BYTES bytes
 # # pubdata_len : length of pubdata array, it shold be OPERATION_CHUNK_SIZE

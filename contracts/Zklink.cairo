@@ -237,6 +237,20 @@ struct CompressedBlockExtraInfo:
     member onchain_operation_pubdata_hashs : Uint256*       # onchain operation pubdata hash of the all other chains
 end
 
+func parse_CompressedBlockExtraInfo{range_check_ptr}(bytes : Bytes, _offset : felt) -> (new_offset : felt, res : CompressedBlockExtraInfo):
+    let (offset, public_data_hash : Uint256) = read_uint256(bytes, _offset)
+    let (offset, offset_commitment_hash : Uint256) = read_uint256(bytes, offset)
+    let (offset, onchain_operations_size) = read_felt(bytes, offset, 4)
+    let (offset, onchain_operations : OnchainOperationData*) = parse_onchain_operations_data(bytes, offset, onchain_operations_size)
+
+    return (offset, CompressedBlockExtraInfo(
+        public_data_hash=public_data_hash,
+        offset_commitment_hash=offset_commitment_hash,
+        onchain_operations_size=onchain_operations_size,
+        onchain_operation_pubdata_hashs=onchain_operation_pubdata_hashs
+    ))
+end
+
 # Data needed to execute committed and verified block
 struct ExecuteBlockInfo:
     member stored_block : StoredBlockInfo
@@ -558,6 +572,8 @@ end
 #
 
 # Commit block
+# 1. Checks onchain operations of all chains, timestamp.
+# 2. Store block commitments, sync hash
 @external
 func commit_block{
     syscall_ptr : felt*,
@@ -577,6 +593,31 @@ func commit_block{
     let (_newBlockExtraData : CompressedBlockExtraInfo)= CommitBlockInfo_new()
 
     _commit_block(_lastCommittedBlockData, new_block_data, false, _newBlockExtraData)
+end
+
+# Commit compressed block
+# 1. Checks onchain operations of current chain, timestamp.
+# 2. Store block commitments, sync hash
+@external
+@external
+func commit_compressed_block{
+    syscall_ptr : felt*,
+    pedersen_ptr : HashBuiltin*,
+    bitwise_ptr : BitwiseBuiltin*,
+    range_check_ptr
+}(size : felt, data_len : felt, data : felt*):
+    tempvar bytes = Bytes(
+        _start=0,
+        bytes_per_felt=FELT_MAX_BYTES,
+        size=size,
+        data_length=data_len,
+        data=data
+    )
+    let (offset, _lastCommittedBlockData : StoredBlockInfo) = parse_stored_block_info(bytes, 0)
+    let (offset, _newBlocksData : CommitBlockInfo) = parse_commit_block_info(bytes, offset)
+    let (_, _newBlockExtraData : CompressedBlockExtraInfo) = parse_CompressedBlockExtraInfo(bytes, offset)
+
+    _commit_block(_lastCommittedBlockData, new_block_data, true, _newBlockExtraData)
 end
 
 
