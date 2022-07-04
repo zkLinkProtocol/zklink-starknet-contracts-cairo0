@@ -16,7 +16,6 @@ func totalBlocksExecuted() -> (blocks : felt):
 end
 
 @view
-@view
 func get_totalBlocksExecuted{
     syscall_ptr : felt*,
     pedersen_ptr : HashBuiltin*,
@@ -24,6 +23,18 @@ func get_totalBlocksExecuted{
 }() -> (res : felt):
     let (blocks) = totalBlocksExecuted.read()
     return (blocks)
+end
+
+func increase_totalBlocksExecuted{
+    syscall_ptr : felt*,
+    pedersen_ptr : HashBuiltin*,
+    range_check_ptr
+}(blocks : felt):
+    let (old_totalBlocksExecuted) = get_totalBlocksExecuted()
+    tempvar new_totalBlocksExecuted = old_totalBlocksExecuted + blocks
+    assert_nn(new_totalBlocksExecuted)
+    totalBlocksExecuted.write(new_totalBlocksExecuted)
+    return ()
 end
 
 # Indicates that exodus (mass exit) mode is triggered.
@@ -212,52 +223,67 @@ end
 
 # Total number of requests
 @storage_var
-func total_open_priority_requests() -> (requests : felt):
+func totalOpenPriorityRequests() -> (requests : felt):
 end
 
 @view
-func get_total_open_priority_requests{
+func get_totalOpenPriorityRequests{
     syscall_ptr : felt*,
     pedersen_ptr : HashBuiltin*,
     range_check_ptr
 }() -> (requests : felt):
-    let (requests) = total_open_priority_requests.read()
+    let (requests) = totalOpenPriorityRequests.read()
     return (requests=requests)
+end
+
+func sub_totalOpenPriorityRequests{
+    syscall_ptr : felt*,
+    pedersen_ptr : HashBuiltin*,
+    range_check_ptr
+}(requests : felt):
+    let (old_totalOpenPriorityRequests) = get_totalOpenPriorityRequests()
+    tempvar new_totalOpenPriorityRequests = old_totalOpenPriorityRequests - requests
+    assert_nn(new_totalOpenPriorityRequests)
+    totalOpenPriorityRequests.write(new_totalCommittedPriorityRequests)
+    return ()
 end
 
 # Total number of committed requests.
 @storage_var
-func total_committed_priority_requests() -> (requests : felt):
+func totalCommittedPriorityRequests() -> (requests : felt):
 end
 
 @view
-func get_total_committed_priority_requests{
+func get_totalCommittedPriorityRequests{
     syscall_ptr : felt*,
     pedersen_ptr : HashBuiltin*,
     range_check_ptr
 }() -> (requests : felt):
-    let (requests) = total_committed_priority_requests.read()
+    let (requests) = totalCommittedPriorityRequests.read()
     return (requests=requests)
 end
 
-func add_total_committed_priority_requests{
+func increase_totalCommittedPriorityRequests{
     syscall_ptr : felt*,
     pedersen_ptr : HashBuiltin*,
     range_check_ptr
 }(amount : felt):
-    let (old_total_committed_priority_requests) = get_total_committed_priority_requests()
-    total_committed_priority_requests.write(old_total_committed_priority_requests + amount)
+    let (old_totalCommittedPriorityRequests) = get_totalCommittedPriorityRequests()
+    tempvar new_totalCommittedPriorityRequests = old_totalCommittedPriorityRequests + amount
+    assert_nn(new_totalCommittedPriorityRequests)
+    totalCommittedPriorityRequests.write(new_totalCommittedPriorityRequests)
     return ()
 end
 
-func sub_total_committed_priority_requests{
+func sub_totalCommittedPriorityRequests{
     syscall_ptr : felt*,
     pedersen_ptr : HashBuiltin*,
     range_check_ptr
 }(amount : felt):
-    let (old_total_committed_priority_requests) = get_total_committed_priority_requests()
-    assert_nn(old_total_committed_priority_requests - amount)
-    total_committed_priority_requests.write(old_total_committed_priority_requests - amount)
+    let (old_totalCommittedPriorityRequests) = get_totalCommittedPriorityRequests()
+    tempvar new_totalCommittedPriorityRequests = old_totalCommittedPriorityRequests - amount
+    assert_nn(new_totalCommittedPriorityRequests)
+    totalCommittedPriorityRequests.write(new_totalCommittedPriorityRequests)
     return ()
 end
 
@@ -295,29 +321,29 @@ end
 
 # First open priority request id
 @storage_var
-func first_priority_request_id() -> (request_id : felt):
+func firstPriorityRequestId() -> (request_id : felt):
 end
 
 @view
-func get_first_priority_request_id{
+func get_firstPriorityRequestId{
     syscall_ptr : felt*,
     pedersen_ptr : HashBuiltin*,
     range_check_ptr
 }() -> (request_id : felt):
-    let (id) = first_priority_request_id.read()
+    let (id) = firstPriorityRequestId.read()
     return (request_id=id)
 end
 
-func increase_first_priority_request_id{
+func increase_firstPriorityRequestId{
     syscall_ptr : felt*,
     pedersen_ptr : HashBuiltin*,
     range_check_ptr
 }(requests : felt):
     alloc_locals
-    let (old_request_id) = get_first_priority_request_id()
-    assert_nn(requests)
-    local new_request_id = old_request_id + requests
-    first_priority_request_id.write(new_request_id)
+    let (old_firstPriorityRequestId) = get_firstPriorityRequestId()
+    tempvar new_firstPriorityRequestId = old_firstPriorityRequestId + requests
+    assert_nn(new_firstPriorityRequestId)
+    firstPriorityRequestId.write(new_firstPriorityRequestId)
     return ()
 end
 
@@ -410,6 +436,33 @@ end
 #     tokens.write(token_id, token)
 #     return ()
 # end
+
+# Accept infos of fast withdraw of account
+# uint32 is the account id
+# byte32 is keccak256(abi.encodePacked(receiver, tokenId, amount, withdrawFeeRate, nonce))
+# address is the accepter
+@storage_var
+func accepts(accountId_and_hash : (felt, Uint256)) -> (address : felt):
+end
+
+@view
+func get_accept{
+    syscall_ptr : felt*,
+    pedersen_ptr : HashBuiltin*,
+    range_check_ptr
+}(accountId_and_hash : (felt, Uint256)) -> (address : felt):
+    let (address) = accepts.read(accountId_and_hash)
+    return (address)
+end
+
+func set_accept{
+    syscall_ptr : felt*,
+    pedersen_ptr : HashBuiltin*,
+    range_check_ptr
+}(accountId_and_hash : (felt, Uint256), address):
+    accepts.write(accountId_and_hash, address)
+    return ()
+end
 
 func only_delegate_call{syscall_ptr : felt*}():
     let (sender) = get_caller_address()
@@ -540,25 +593,25 @@ end
 
 # Root-chain balances (per owner and token id) to withdraw
 @storage_var
-func pending_balance(owner_and_token_id : (felt, felt)) -> (balance : felt):
+func pendingBalances(owner_and_token_id : (felt, felt)) -> (balance : felt):
 end
 
 @view
-func get_pending_balance{
+func get_pendingBalances{
     syscall_ptr : felt*,
     pedersen_ptr : HashBuiltin*,
     range_check_ptr
 }(owner_and_token_id : (felt, felt)) -> (balance : felt):
-    let (balance) = pending_balance.read(owner_and_token_id)
+    let (balance) = pendingBalances.read(owner_and_token_id)
     return (balance)
 end
 
-func add_pending_balance{
+func add_pendingBalances{
     syscall_ptr : felt*,
     pedersen_ptr : HashBuiltin*,
     range_check_ptr
 }(owner_and_token_id : (felt, felt), balance : felt):
-    pending_balance.write(owner_and_token_id, balance)
+    pendingBalances.write(owner_and_token_id, balance)
     return ()
 end
 
@@ -592,4 +645,18 @@ func hashStoredBlockInfo{
 }(_storedBlockInfo : StoredBlockInfo) -> (hash : Uint256):
     # TODO : keccak
     return (Uint256(0, 0))
+end
+
+func increaseBalanceToWithdraw{
+    syscall_ptr : felt*,
+    pedersen_ptr : HashBuiltin*,
+    range_check_ptr
+}(_packedBalanceKey : (felt, felt), _amount : felt):
+    let (balance) = get_pendingBalances(_packedBalanceKey)
+
+    # check for overflow
+    tempvar new_balance = balance + _amount
+    assert_nn(new_balance - _amount)
+
+    add_pendingBalances(_packedBalanceKey, new_balance)
 end

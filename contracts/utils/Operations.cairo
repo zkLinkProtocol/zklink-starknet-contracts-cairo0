@@ -159,6 +159,63 @@ func convert_fullexit_operation_to_array(op : FullExit) -> (n_elements : felt, e
     return (n_elements=6, elements=op_array)
 end
 
+# Withdraw operation
+struct Withdraw:
+    member chainId : felt               # uint8, which chain the withdraw happened
+    member accountId : felt             # uint32, the account id to withdraw from
+    member tokenId : felt               # uint16, the token that to withdraw
+    member amount : felt                # uint128, the token amount to withdraw
+    member owner : felt                 # 20 byte, the address to receive token
+    member nonce : felt                 # uint32, zero means normal withdraw, not zero means fast withdraw and the value is the account nonce
+    member fastWithdrawFeeRate : felt   # uint16, fast withdraw fee rate taken by accepter
+end
+
+# Deserialize Withdraw pubdata
+func read_withdraw_pubdata{range_check_ptr}(op_pubdata : Bytes) -> (parsed : Withdraw):
+    let (offset, chainId) = read_felt(op_pubdata, OP_TYPE_BYTES, CHAIN_BYTES)
+    let (offset, accountId) = read_felt(op_pubdata, offset, ACCOUNT_ID_BYTES)
+    let (offset, tokenId) = read_felt(op_pubdata, offset, TOKEN_BYTES)
+    let (offset, amount) = read_felt(op_pubdata, offset, AMOUNT_BYTES)
+    let (offset, owner) = read_felt(op_pubdata, offset, ADDRESS_BYTES)
+    let (offset, nonce) = read_felt(op_pubdata, offset, NONCE_BYTES)
+    let (_, fastWithdrawFeeRate) = read_felt(op_pubdata, offset, 2)
+    
+
+    let parsed = Withdraw(
+        chainId=chainId,
+        accountId=accountId,
+        tokenId=tokenId,
+        amount=amount,
+        owner=owner,
+        nonce=nonce,
+        fastWithdrawFeeRate=fastWithdrawFeeRate
+    )
+    return (parsed)
+end
+
+struct ForcedExit:
+    member chainId : felt   # uint8, which chain the force exit happened
+    member tokenId : felt   # uint16, the token that to withdraw
+    member amount : felt    # uint128, the token amount to withdraw
+    member target : felt    # 20 byte, the address to receive token
+end
+
+# Deserialize ForcedExit pubdata
+func read_forcedexit_pubdata{range_check_ptr}(op_pubdata : Bytes) -> (parsed : ForcedExit):
+    let (offset, chainId) = read_felt(op_pubdata, OP_TYPE_BYTES, CHAIN_BYTES)
+    let (offset, tokenId) = read_felt(op_pubdata, offset, TOKEN_BYTES)
+    let (offset, amount) = read_felt(op_pubdata, offset, AMOUNT_BYTES)
+    let (offset, target) = read_felt(op_pubdata, offset, ADDRESS_BYTES)
+    
+
+    let parsed = ForcedExit(
+        chainId=chainId,
+        tokenId=tokenId,
+        amount=amount,
+        target=target
+    )
+    return (parsed)
+end
 
 
 struct ChangePubKey:

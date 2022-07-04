@@ -79,7 +79,8 @@ const ALL_CHAINS = 15
 
 # Address represent eth when deposit or withdraw
 # TODO: It should be a storage_var instead of constant
-const ETH_ADDRESS = 0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE
+# Because of ETH address is different between testnet and mainnet
+const ETH_ADDRESS = 0x49d36570d4e46f48e99674bd3fcc84644ddd6b96f7c741b1562b82f9e004dc7
 
 # Bytes in one chunk
 const CHUNK_BYTES = 14

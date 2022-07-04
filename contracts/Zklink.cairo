@@ -32,6 +32,7 @@ from contracts.utils.Bytes import (
     read_bytes,
     FELT_MAX_BYTES,
     split_bytes,
+    join_bytes,
     create_empty_bytes
 )
 from contracts.utils.Operations import (
@@ -46,7 +47,11 @@ from contracts.utils.Operations import (
     read_fullexit_pubdata,
     check_fullexit_with_priority_operation,
     ChangePubKey,
-    read_changepubkey_pubdata
+    read_changepubkey_pubdata,
+    Withdraw,
+    read_withdraw_pubdata,
+    ForcedExit,
+    read_forcedexit_pubdata,
 )
 
 from contracts.utils.Utils import (
@@ -87,6 +92,7 @@ from contracts.utils.Config import (
 
 from contracts.utils.Storage import (
     get_totalBlocksExecuted,
+    increase_totalBlocksExecuted,
     get_exodus_mode,
     set_verifier_contract_address,
     set_periphery_contract_address,
@@ -98,14 +104,16 @@ from contracts.utils.Storage import (
     set_totalBlocksCommitted,
     get_totalBlocksProven,
     set_totalBlocksProven,
-    get_total_open_priority_requests,
-    get_total_committed_priority_requests,
-    add_total_committed_priority_requests,
-    sub_total_committed_priority_requests,
+    get_totalOpenPriorityRequests,
+    sub_totalOpenPriorityRequests,
+    get_totalCommittedPriorityRequests,
+    increase_totalCommittedPriorityRequests,
+    sub_totalCommittedPriorityRequests,
     get_totalBlocksSynchronized,
-    set_totalBlocksSynchronized
+    set_totalBlocksSynchronized,
     get_chain_id,
-    get_first_priority_request_id,
+    get_firstPriorityRequestId,
+    increase_firstPriorityRequestId,
     set_priority_request,
     only_delegate_call,
     StoredBlockInfo,
@@ -114,20 +122,25 @@ from contracts.utils.Storage import (
     get_storedBlockHashes,
     set_storedBlockHashes,
     convert_stored_block_info_to_array,
-    get_pending_balance,
-    add_pending_balance,
+    get_pendingBalances,
+    add_pendingBalances,
     active,
     only_validator,
     get_total_blocks_committed,
     get_priority_requests,
-    get_auth_facts
+    get_auth_facts,
+    increaseBalanceToWithdraw,
+    get_accept,
+    set_accept
 )
 
 from contracts.utils.Events import (
     new_priority_request,
     with_draw,
     block_commit,
-    BlocksRevert
+    BlocksRevert,
+    WithdrawalPending,
+    BlockExecuted
 )
 
 from contracts.utils.ReentrancyGuard import (
@@ -203,7 +216,7 @@ struct CommitBlockInfo:
 end
 
 func CommitBlockInfo_new() -> (res : CommitBlockInfo):
-    alloc_locals()
+    alloc_locals
     let (public_data : Bytes) = create_empty_bytes()
     let (onchain_operations : OnchainOperationData*) = alloc()
     return (
@@ -219,7 +232,9 @@ func CommitBlockInfo_new() -> (res : CommitBlockInfo):
     )
 end
 
-func parse_commit_block_info{range_check_ptr}(bytes : Bytes, _offset : felt) -> (new_offset : felt, res : CommitBlockInfo):
+func parse_commit_block_info{
+    range_check_ptr
+}(bytes : Bytes, _offset : felt) -> (new_offset : felt, res : CommitBlockInfo):
     let (offset, new_state_hash : Uint256) = read_uint256(bytes, _offset)
     let (offset, timestamp : Uint256) = read_uint256(bytes, offset)
     let (offset, block_number) = read_felt(bytes, offset, 4)
@@ -247,7 +262,9 @@ struct CompressedBlockExtraInfo:
     member onchain_operation_pubdata_hashs : Uint256*       # onchain operation pubdata hash of the all other chains
 end
 
-func parse_CompressedBlockExtraInfo{range_check_ptr}(bytes : Bytes, _offset : felt) -> (new_offset : felt, res : CompressedBlockExtraInfo):
+func parse_CompressedBlockExtraInfo{
+    range_check_ptr
+}(bytes : Bytes, _offset : felt) -> (new_offset : felt, res : CompressedBlockExtraInfo):
     let (offset, public_data_hash : Uint256) = read_uint256(bytes, _offset)
     let (offset, offset_commitment_hash : Uint256) = read_uint256(bytes, offset)
     let (offset, onchain_operations_size) = read_felt(bytes, offset, 4)
@@ -263,9 +280,46 @@ end
 
 # Data needed to execute committed and verified block
 struct ExecuteBlockInfo:
-    member stored_block : StoredBlockInfo
-    member pending_onchain_ops_pubdata_len : felt
-    member pending_onchain_ops_pubdata : Bytes*
+    member storedBlock : StoredBlockInfo
+    member pendingOnchainOpsPubdata_len : felt
+    member pendingOnchainOpsPubdata : Bytes*
+end
+
+func parse_ExecuteBlockInfo{
+    range_check_ptr
+}(bytes : Bytes, _offset : felt) -> (new_offset : felt, res : ExecuteBlockInfo):
+    alloc_locals
+    let (offset, storedBlock : StoredBlockInfo) = parse_stored_block_info(bytes, _offset)
+    let (offset, local pendingOnchainOpsPubdata_len) = read_felt(bytes, offset, 4)
+    let (local pendingOnchainOpsPubdata : Bytes*) = alloc()
+    let (offset) = parse_pendingOnchainOpsPubdata(
+        bytes, offset, pendingOnchainOpsPubdata, pendingOnchainOpsPubdata_len - 1)
+
+    return (offset, ExecuteBlockInfo(
+        storedBlock=storedBlock,
+        pendingOnchainOpsPubdata_len=pendingOnchainOpsPubdata_len,
+        pendingOnchainOpsPubdata=pendingOnchainOpsPubdata
+    ))
+end
+
+func parse_pendingOnchainOpsPubdata{
+    range_check_ptr
+}(
+    bytes : Bytes,
+    _offset : felt,
+    pendingOnchainOpsPubdata : Bytes*,
+    i : felt
+) -> (new_offset : felt):
+    if i == -1:
+        return (_offset)
+    end
+
+    let (before_offset) = parse_pendingOnchainOpsPubdata(bytes, _offset, pendingOnchainOpsPubdata, i - 1)
+    let (offset, pendingOnchainOpsPubdata_size) = read_felt(bytes, before_offset, 4)
+    let (offset, data) = read_bytes(bytes, offset, pendingOnchainOpsPubdata_size)
+    assert pendingOnchainOpsPubdata[i] = data
+
+    return (offset)
 end
 
 #
@@ -508,14 +562,14 @@ func withdraw_pending_balance{
     end
 
     # Set the available amount to withdraw
-    let (balance) = get_pending_balance((owner, token_id))
+    let (balance) = get_pendingBalances((owner, token_id))
     let (amount) = min_felt(balance, _amount)
     with_attr error_message("b1"):
         assert_nn(amount)
     end
 
     # Effects
-    add_pending_balance((owner, token_id), balance - amount)    # amount <= balance
+    add_pendingBalances((owner, token_id), balance - amount)    # amount <= balance
 
     # Interactions
     let token_address = rt.token_address
@@ -528,7 +582,7 @@ func withdraw_pending_balance{
         let (amount_1 : Uint256) = transfer_ERC20(token_address, owner, amount, max_amount, rt.standard)
         if uint256_eq(amount, amount1) == 0:
             let pending_balance = uint256_to_felt(max_amount - amount1)
-            add_pending_balance((owner, token_id), pending_balance)
+            add_pendingBalances((owner, token_id), pending_balance)
             let amount2 = uint256_to_felt(amount1)
             with_draw.emit(token_id=token_id, amount2)
         end
@@ -609,7 +663,6 @@ end
 # 1. Checks onchain operations of current chain, timestamp.
 # 2. Store block commitments, sync hash
 @external
-@external
 func commit_compressed_block{
     syscall_ptr : felt*,
     pedersen_ptr : HashBuiltin*,
@@ -644,6 +697,7 @@ end
 # end
 
 # Reverts unExecuted blocks
+@external
 func revertBlocks{
     syscall_ptr : felt*,
     pedersen_ptr : HashBuiltin*,
@@ -651,6 +705,11 @@ func revertBlocks{
     range_check_ptr
 }(_blocksToRevert_len : felt, _blocksToRevert : StoredBlockInfo*):
     alloc_locals
+    # Lock with reentrancy_guard
+    reentrancy_guard_lock()
+    # onlyValidator
+    only_validator()
+
     let (blocksCommitted) = get_totalBlocksCommitted()
     let (local totalBlocksExecuted) = get_totalBlocksExecuted()
     let (blocksToRevert) = min_felt(_blocksToRevert_len, blocksCommitted - totalBlocksExecuted)
@@ -659,7 +718,7 @@ func revertBlocks{
         _blocksToRevert, _blocksToRevert - 1, blocksCommitted, 0)
     
     set_totalBlocksCommitted(blocksCommitted)
-    sub_total_committed_priority_requests(revertedPriorityRequests)
+    sub_totalCommittedPriorityRequests(revertedPriorityRequests)
 
     let (local totalBlocksCommitted) = get_totalBlocksCommitted()
     let (totalBlocksProven) = get_totalBlocksProven()
@@ -677,6 +736,9 @@ func revertBlocks{
 
     BlocksRevert.emit(totalBlocksExecuted, blocksCommitted)
 
+    # Unlock
+    reentrancy_guard_unlock()
+    return ()
 end
 
 func _revertBlocks{
@@ -710,6 +772,51 @@ func _revertBlocks{
     return (before_blocksCommitted - 1, before_revertedPriorityRequests + _blocksToRevert[i].priority_operations)
 end
 
+# Execute block, completing priority operations and processing withdrawals.
+# 1. Processes all pending operations (Send Exits, Complete priority requests)
+# 2. Finalizes block on Ethereum
+@external
+func executeBlock{
+    syscall_ptr : felt*,
+    pedersen_ptr : HashBuiltin*,
+    bitwise_ptr : BitwiseBuiltin*,
+    range_check_ptr
+}(size : felt, data_len : felt, data : felt*):
+    alloc_locals
+    # Lock with reentrancy_guard
+    reentrancy_guard_lock()
+    # active and onlyValidator
+    active()
+    only_validator()
+
+    # parse calldata
+    tempvar bytes = Bytes(
+        _start=0,
+        bytes_per_felt=FELT_MAX_BYTES,
+        size=size,
+        data_length=data_len,
+        data=data
+    )
+
+    let (_, _blockData : ExecuteBlockInfo) = parse_ExecuteBlockInfo(bytes, 0)
+    let (local priorityRequestsExecuted) = executeOneBlock(_blockData, 0)
+
+    increase_firstPriorityRequestId(priorityRequestsExecuted)
+    sub_totalCommittedPriorityRequests(priorityRequestsExecuted)
+    sub_totalOpenPriorityRequests(priorityRequestsExecuted)
+
+    increase_totalBlocksExecuted(1)
+    with_attr error_message("d1"):
+        let (totalBlocksExecuted) = get_totalBlocksExecuted()
+        let (totalBlocksSynchronized) = get_totalBlocksSynchronized()
+        assert_nn_le(totalBlocksExecuted, totalBlocksSynchronized)
+    end
+
+    BlockExecuted.emit(_blockData.storedBlock.blockNumber)
+    # Unlock
+    reentrancy_guard_unlock()
+    return ()
+end
 
 #
 # Internal function
@@ -789,8 +896,8 @@ func add_priority_request{
     local expiration_block = block_number + PRIORITY_EXPIRATION
 
     # overflow is impossible
-    let (first_priority_request_id) = get_first_priority_request_id()
-    let (total_open_priority_requests) = get_total_open_priority_requests()
+    let (first_priority_request_id) = get_firstPriorityRequestId()
+    let (total_open_priority_requests) = get_totalOpenPriorityRequests()
     let next_priority_request_id = first_priority_request_id + total_open_priority_requests
 
     let (hashed_pub_data) = hash_array_to_uint160(n_elements, pub_data)
@@ -847,15 +954,15 @@ func _commit_block{
 
     # Effects
     let (_lastCommittedBlockData) = commit_one_block(_lastCommittedBlockData, _newBlocksData, compressed, _newBlocksExtraData)
-    add_total_committed_priority_requests(_lastCommittedBlockData.priority_operations)
+    increase_totalCommittedPriorityRequests(_lastCommittedBlockData.priority_operations)
     let (n_elements : felt, elements : felt*) = convert_stored_block_info_to_array(_lastCommittedBlockData)
     let (new_stored_block_hash : Uint256) = hash_array_to_uint256(n_elements, elements)
     set_storedBlockHashes(_lastCommittedBlockData.block_number, new_stored_block_hash)
 
 
     with_attr error_message("f2"):
-        let (total_committed_priority_requests) = get_total_committed_priority_requests()
-        let (total_open_priority_requests) = get_total_open_priority_requests()
+        let (total_committed_priority_requests) = get_totalCommittedPriorityRequests()
+        let (total_open_priority_requests) = get_totalOpenPriorityRequests()
 
         assert_nn_le(total_committed_priority_requests, total_open_priority_requests)
     end
@@ -999,8 +1106,8 @@ func collect_onchain_ops{
     end
 
     # overflow is impossible
-    let (first_priority_request_id) = get_first_priority_request_id()
-    let (total_committed_priority_requests) = total_committed_priority_requests()
+    let (first_priority_request_id) = get_firstPriorityRequestId()
+    let (total_committed_priority_requests) = get_totalCommittedPriorityRequests()
     tempvar uncommitted_priority_requests_offset = first_priority_request_id + total_committed_priority_requests
 
     let (onchain_operation_pubdata_hashs : DictAccess*) = init_onchain_operation_pubdata_hashs()
@@ -1244,6 +1351,157 @@ func verify_changepubkey_CREATE2{range_check_ptr, bitwise_ptr : BitwiseBuiltin*}
     # TODO: keccak
 
     return (1)
+end
+
+# Executes one block
+# 1. Processes all pending operations (Send Exits, Complete priority requests)
+# 2. Finalizes block on Ethereum
+# _executedBlockIdx is index in the array of the blocks that we want to execute together
+func executeOneBlock{
+    syscall_ptr : felt*,
+    pedersen_ptr : HashBuiltin*,
+    range_check_ptr
+}(_blockExecuteData : ExecuteBlockInfo, _executedBlockIdx : felt) -> (priorityRequestsExecuted : felt):
+    # Ensure block was committed
+    with_attr error_message("m0"):
+        let (hash1) =  hashStoredBlockInfo(_blockExecuteData.storedBlock)
+        let (hash2) = get_storedBlockHashes(_blockExecuteData.storedBlock.blockNumber)
+        let (eq) = uint256_eq(hash1, hash2)
+        assert eq = 1
+    end
+
+    with_attr error_message("m1"):
+        let (totalBlocksExecuted) = get_totalBlocksExecuted()
+        assert _blockExecuteData.storedBlock.blockNumber = totalBlocksExecuted + _executedBlockIdx + 1
+    end
+
+    let (pendingOnchainOpsHash : Uint256) = _executeOneBlock(
+        _executeOneBlock.pendingOnchainOpsPubdata, _executeOneBlock.pendingOnchainOpsPubdata_size - 1)
+    
+    with_attr error_message("m3"):
+        let (eq) = uint256_eq(pendingOnchainOpsHash, _blockExecuteData.storedBlock.pendingOnchainOperationsHash)
+        assert eq = 1
+    end
+    return (_blockExecuteData.storedBlock.priorityOperations)
+end
+
+func _executeOneBlock{
+    syscall_ptr : felt*,
+    pedersen_ptr : HashBuiltin*,
+    range_check_ptr
+}(pendingOnchainOpsPubdata : Bytes*, i : felt) -> (hash : Uint256):
+    if i == -1:
+        return (Uint256(EMPTY_STRING_KECCAK_LOW, EMPTY_STRING_KECCAK_HIGH))
+    end
+    let (before_hash : Uint256) = _executeOneBlock(pendingOnchainOpsPubdata, i - 1)
+
+    tempvar pubData = pendingOnchainOpsPubdata[i]
+
+    let (offset, op_type) = read_felt(pubData, 0, 1)
+
+    # `pendingOnchainOpsPubdata` only contains ops of the current chain
+    # no need to check chain id
+    if op_type == OpType.Withdraw:
+        let (withdraw : Withdraw) = read_withdraw_pubdata(pubData)
+        executeWithdraw(withdraw)
+    else:
+        if op_type == OpType.ForcedExit:
+            let (forcedexit : ForcedExit) = read_forcedexit_pubdata(pubData)
+            withdrawOrStore(op.tokenId, op.target, op.amount);
+        else:
+            if op_type == OpType.FullExit:
+                let (fullexit : FullExit) = read_fullexit_pubdata(pubData)
+                withdrawOrStore(op.tokenId, op.target, op.amount);
+            else:
+                # TODO : revert("m2")
+            end
+        end
+    end
+    let (hash : Uint256) = concat_hash(before_hash, pubData)
+    return (hash)
+end
+
+# Execute withdraw operation
+func executeWithdraw{syscall_ptr : felt*, pedersen_ptr : HashBuiltin*, range_check_ptr}(op : Withdraw):
+    alloc_locals
+    # nonce > 0 means fast withdraw
+    if op.nonce == 0:
+        let (packed : felt*) = alloc()
+        assert packed[0] = op.owner
+        assert packed[1] = op.tokenId
+        assert packed[2] = op.amount
+        assert packed[3] = op.fastWithdrawFeeRate
+        assert packed[4] = op.nonce
+        let (fwHash : Uint256) = hash_array_to_uint256(5, packed)
+        let (address) = get_accept((op.accountId, fwHash))
+        if address == 0:
+            # receiver act as a accepter
+            set_accept((op.accountId, fwHash), op.owner)
+            withdrawOrStore(op.tokenId, op.owner, op.amount)
+        else:
+            # just increase the pending balance of accepter
+            increasePendingBalance(op.tokenId, accepter, op.amount)
+        end
+    else:
+        withdrawOrStore(op.tokenId, op.owner, op.amount)
+    end
+end
+
+# Try to send token to _recipients
+# On failure: Increment _recipients balance to withdraw.
+func withdrawOrStore{
+    syscall_ptr : felt*,
+    pedersen_ptr : HashBuiltin*,
+    range_check_ptr
+}(
+    _tokenId : felt,
+    _recipient : felt,
+    _amount : felt
+):
+    if _amount == 0:
+        return ()
+    end
+
+    let (rt : RegisteredToken) = get_token()
+    if rt.registered == 0:
+        increasePendingBalance(_tokenId, _recipient, _amount)
+        return ()
+    end
+
+    tempvar tokenAddress = rt.tokenAddress
+    # if tokenAddress == ETH_ADDRESS:
+    #     IERC20.transfer(
+    #         contract_address=ETH_ADDRESS,
+    #         recipient=_recipient,
+    #         amount=_amount
+    #     )
+    # else:
+
+    # Need check: In starknet L2, Ether is a kind of ERC20?
+    # We use `transferERC20` here to check that `ERC20` token indeed transferred `_amount`
+    # and fail if token subtracted from zkLink balance more then `_amount` that was requested.
+    # This can happen if token subtracts fee from sender while transferring `_amount` that was requested to transfer.
+    
+    transfer_ERC20(tokenAddress, _recipient, _amount, _amount, rt.standard)
+    # What about sent fail?
+    increasePendingBalance(_tokenId, _recipient, _amount)
+    # end
+
+end
+
+# Increase `_recipient` balance to withdraw
+func increasePendingBalance{
+    syscall_ptr : felt*,
+    pedersen_ptr : HashBuiltin*,
+    range_check_ptr
+}(
+    _tokenId : felt,
+    _recipient : felt,
+    _amount : felt
+):
+    increaseBalanceToWithdraw((_recipient, _tokenId), _amount)
+    WithdrawalPending.emit(_tokenId, _recipient, _amount)
+    return ()
 end
 
 # Creates block commitment from its data
