@@ -23,6 +23,9 @@ const MAX_SUB_ACCOUNT_ID = 2 ** 3 - 1
 # TODO: It should be a storage_var instead of constant
 const BLOCK_PERIOD = 15 # 15 seconds
 
+# Bytes in one chunk
+const CHUNK_BYTES = 14
+
 # Operation chunks
 const OPERATION_CHUNK_SIZE = 4
 const DEPOSIT_BYTES = OPERATION_CHUNK_SIZE * CHUNK_BYTES
@@ -81,9 +84,6 @@ const ALL_CHAINS = 15
 # TODO: It should be a storage_var instead of constant
 # Because of ETH address is different between testnet and mainnet
 const ETH_ADDRESS = 0x49d36570d4e46f48e99674bd3fcc84644ddd6b96f7c741b1562b82f9e004dc7
-
-# Bytes in one chunk
-const CHUNK_BYTES = 14
 
 # see EIP-712
 # keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)");

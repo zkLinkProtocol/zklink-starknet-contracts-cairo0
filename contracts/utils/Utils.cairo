@@ -22,7 +22,7 @@ func hash_array_to_uint160{
     finalize_keccak(keccak_ptr_start=keccak_ptr_start, keccak_ptr_end=keccak_ptr)
 
     # Uint256 has two 16 bytes(128 bit) part
-    let high_32 = split_bytes(16, hash.high, 12, 4)
+    let (high_32) = split_bytes(16, hash.high, 12, 4)
     let (output) = join_bytes(high_32, hash.low, 16)
 
     return (res=output)
@@ -40,11 +40,7 @@ func hash_array_to_uint256{
     let (hash) = keccak_felts{keccak_ptr=keccak_ptr}(n_elements, elements)
     finalize_keccak(keccak_ptr_start=keccak_ptr_start, keccak_ptr_end=keccak_ptr)
 
-    # Uint256 has two 16 bytes(128 bit) part
-    let high_32 = split_bytes(16, hash.high, 12, 4)
-    let (output) = join_bytes(high_32, hash.low, 16)
-
-    return (res=output)
+    return (res=hash)
 end
 
 # Convert felt to Uint256, felt should less than 2 ** 128 - 1

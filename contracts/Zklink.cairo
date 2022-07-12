@@ -1076,7 +1076,7 @@ func _create_sync_hash{
     let chainIndex_and_ALL_CHAINS = bitwise_and(chainIndex, ALL_CHAINS)
     if chainIndex_and_ALL_CHAINS == chainIndex:
         let (hash : Uint256) = dict_read{dict_ptr=onchainOperationPubdataHashs}(key=i)
-        let (syncHash) = = concat_two_hash(before_commitment, hash)
+        let (syncHash) = concat_two_hash(before_commitment, hash)
         return (syncHash)
     else:
         return (before_commitment)
