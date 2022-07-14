@@ -3,22 +3,22 @@
 from starkware.cairo.common.uint256 import Uint256
 
 @event
-func new_priority_request(
+func NewPriorityRequest(
     sender : felt,
-    serial_id : felt,
-    op_type : felt,
-    pub_data_len : felt,
-    pub_data : felt*,
-    expiration_block : felt
+    serialId : felt,
+    opType : felt,
+    pubData_len : felt,
+    pubData : felt*,
+    expirationBlock : felt
 ):
 end
 
 @event
-func with_draw(token_id : felt, amount : felt):
+func Withdrawal(token_id : felt, amount : felt):
 end
 
 @event
-func block_commit(block_number : felt):
+func BlockCommit(block_number : felt):
 end
 
 @event
@@ -33,4 +33,54 @@ end
 # Event emitted when a block is executed
 @event
 func BlockExecuted(blockNumber : felt):
+end
+
+# Exodus mode entered event
+@event
+func ExodusMode():
+end
+
+# Event emitted when user sends a authentication fact (e.g. pub-key hash)
+@event
+func FactAuth(sender : felt, nonce : felt, fact : felt):
+end
+
+# Governor changed
+@event
+func NewGovernor(newGovernor : felt):
+end
+
+# Token added to ZkLink net
+@event
+func NewToken(tokenId : felt, token : felt):
+end
+
+# pause status update
+@event
+func TokenPausedUpdate(tokenId : felt, paused : felt):
+end
+
+# Validator's status changed
+@event
+func ValidatorStatusUpdate(validatorAddress : felt, isActive : felt):
+end
+
+# New bridge added
+@event
+func AddBridge(bridge : felt):
+end
+
+# Bridge update
+@event
+func UpdateBridge(bridgeIndex : felt, enableBridgeTo : felt, enableBridgeFrom : felt):
+end
+
+# Event emitted when accepter accept a fast withdraw
+@event
+func Accept(accepter : felt, accountId : felt, receiver : felt, tokenId : felt, amountSent : felt, amountReceive : felt):
+end
+
+# Event emitted when set broker allowance
+@event
+func BrokerApprove(tokenId : felt, owner : felt, spender : felt, amount : felt):
 end

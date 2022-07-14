@@ -75,6 +75,34 @@ func read_felt{range_check_ptr}(
     end
 end
 
+func read_felt_array{range_check_ptr}(
+    bytes : Bytes,
+    offset : felt,
+    array_len : felt,
+    element_size : felt
+) -> (new_offset : felt, res : felt*):
+    alloc_locals
+    let (res : felt*) = alloc()
+    let (new_offset) = _read_felt_array(bytes, offset, res, array_len - 1, element_size)
+    return (new_offset, res)
+end
+
+func _read_felt_array{range_check_ptr}(
+    bytes : Bytes,
+    offset : felt,
+    array : felt*,
+    i : felt,
+    element_size : felt
+) -> (new_offset : felt):
+    if i == -1:
+        return (offset)
+    end
+    let (old_offset) = _read_felt_array(bytes, offset, array, i - 1, element_size)
+    let (new_offset, data) = read_felt(bytes, new_offset, element_size)
+    assert array[i] = data
+    return (new_offset)
+end
+
 # read uint256 from bytes(big-endian)
 func read_uint256{range_check_ptr}(
     bytes : Bytes,
@@ -87,6 +115,33 @@ func read_uint256{range_check_ptr}(
     let (local high_offset, local high_part) = read_felt(bytes, offset, 16)
     let (local low_offset, local low_part) = read_felt(bytes, high_offset, 16)
     return (low_offset, Uint256(low_part, high_part))
+end
+
+func read_uint256_array{range_check_ptr}(
+    bytes : Bytes,
+    offset : felt,
+    array_len : felt,
+) -> (new_offset : felt, res : Uint256*):
+    alloc_locals
+    let (res : Uint256*) = alloc()
+    let (new_offset) = _read_uint256_array(bytes, offset, res, array_len - 1)
+    return (new_offset, res)
+
+end
+
+func _read_uint256_array{range_check_ptr}(
+    bytes : Bytes,
+    offset : felt,
+    array : felt*,
+    i : felt,
+) -> (new_offset : felt):
+    if i == -1:
+        return (offset)
+    end
+    let (old_offset) = _read_uint256_array(bytes, offset, array, i - 1)
+    let (new_offset, data : Uint256) = read_uint256(bytes, new_offset)
+    assert array[i] = data
+    return (new_offset)
 end
 
 func read_bytes{range_check_ptr}(

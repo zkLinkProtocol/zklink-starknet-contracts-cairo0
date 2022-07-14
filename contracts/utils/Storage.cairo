@@ -1,8 +1,8 @@
 # ZkLink storage contract
 %lang starknet
 
-from starkware.cairo.common.cairo_builtins import HashBuiltin
-from starkware.cairo.common.math import assert_nn, assert_not_equal
+from starkware.cairo.common.cairo_builtins import HashBuiltin, BitwiseBuiltin
+from starkware.cairo.common.math import assert_nn, assert_not_equal, assert_lt
 from starkware.cairo.common.alloc import alloc
 from starkware.starknet.common.syscalls import get_contract_address, get_caller_address
 from starkware.cairo.common.uint256 import Uint256
@@ -40,17 +40,26 @@ end
 # Indicates that exodus (mass exit) mode is triggered.
 # Once it was raised, it can not be cleared again, and all users must exit
 @storage_var
-func exodus_mode() -> (res : felt):
+func exodusMode() -> (res : felt):
 end
 
 @view
-func get_exodus_mode{
+func get_exodusMode{
     syscall_ptr : felt*,
     pedersen_ptr : HashBuiltin*,
     range_check_ptr
 }() -> (res : felt):
-    let (mode) = exodus_mode.read()
+    let (mode) = exodusMode.read()
     return (mode)
+end
+
+func set_exodusMode{
+    syscall_ptr : felt*,
+    pedersen_ptr : HashBuiltin*,
+    range_check_ptr
+}(value : felt):
+    exodusMode.write(value)
+    return ()
 end
 
 func active{
@@ -58,7 +67,7 @@ func active{
     pedersen_ptr : HashBuiltin*,
     range_check_ptr
 }():
-    let (exodus_mode_stat) = get_exodus_mode()
+    let (exodus_mode_stat) = get_exodusMode()
     with_attr error_message("0"):
         assert exodus_mode_stat = 0
     end
@@ -70,7 +79,7 @@ func not_active{
     pedersen_ptr : HashBuiltin*,
     range_check_ptr
 }():
-    let (exodus_mode_stat) = get_exodus_mode()
+    let (exodus_mode_stat) = get_exodusMode()
     with_attr error_message("1"):
         assert exodus_mode_stat = 1
     end
@@ -146,6 +155,19 @@ func set_network_governor_address{
     range_check_ptr
 }(address : felt):
     network_governor_address.write(address)
+    return ()
+end
+
+func only_governor{
+    syscall_ptr : felt*,
+    pedersen_ptr : HashBuiltin*,
+    range_check_ptr
+}():
+    let (sender) = get_caller_address()
+    let (governor) = get_network_governor_address()
+    with_attr error_message("3"):
+        assert governor = sender
+    end
     return ()
 end
 
@@ -244,7 +266,7 @@ func sub_totalOpenPriorityRequests{
     let (old_totalOpenPriorityRequests) = get_totalOpenPriorityRequests()
     tempvar new_totalOpenPriorityRequests = old_totalOpenPriorityRequests - requests
     assert_nn(new_totalOpenPriorityRequests)
-    totalOpenPriorityRequests.write(new_totalCommittedPriorityRequests)
+    totalOpenPriorityRequests.write(new_totalOpenPriorityRequests)
     return ()
 end
 
@@ -285,23 +307,6 @@ func sub_totalCommittedPriorityRequests{
     assert_nn(new_totalCommittedPriorityRequests)
     totalCommittedPriorityRequests.write(new_totalCommittedPriorityRequests)
     return ()
-end
-
-# Priority Requests mapping (request id - operation)
-# Contains op type, pubdata and expiration block of unsatisfied requests.
-# Numbers are in order of requests receiving
-@storage_var
-func priority_requests(request_id : felt) -> (op : PriorityOperation):
-end
-
-@view
-func get_priority_requests{
-    syscall_ptr : felt*,
-    pedersen_ptr : HashBuiltin*,
-    range_check_ptr
-}(request_id : felt) -> (op : PriorityOperation):
-    let (op : PriorityOperation) = priority_requests.read(request_id)
-    return (op)
 end
 
 # Chain id defined by ZkLink
@@ -351,43 +356,48 @@ end
 # Contains op type, pubdata and expiration block of unsatisfied requests.
 # Numbers are in order of requests receiving
 @storage_var
-func priority_requests(priority_request_id : felt) -> (operation : PriorityOperation):
+func priorityRequests(priority_request_id : felt) -> (operation : PriorityOperation):
 end
 
 @view
-func get_priority_request{
+func get_priorityRequests{
     syscall_ptr : felt*,
     pedersen_ptr : HashBuiltin*,
     range_check_ptr
 }(priority_request_id : felt) -> (operation : PriorityOperation):
-    let (op : PriorityOperation) = priority_requests.read(priority_request_id)
+    let (op : PriorityOperation) = priorityRequests.read(priority_request_id)
     return (operation=op)
 end
 
-func set_priority_request{
+func set_priorityRequests{
     syscall_ptr : felt*,
     pedersen_ptr : HashBuiltin*,
     range_check_ptr
 }(priority_request_id : felt, operation : PriorityOperation) -> ():
-    priority_requests.write(priority_request_id, operation)
+    priorityRequests.write(priority_request_id, operation)
+    return ()
+end
+
+func delete_priorityRequests{
+    syscall_ptr : felt*,
+    pedersen_ptr : HashBuiltin*,
+    range_check_ptr
+}(priority_request_id : felt) -> ():
+    priorityRequests.write(priority_request_id, PriorityOperation(0, 0, 0))
     return ()
 end
 
 struct RegisteredToken:
-    member registered : felt    # whether token registered to ZkLink or not, default is false
-    member paused : felt        # whether token can deposit to ZkLink or not, default is false
-    member token_address : felt # the token address
-    member standard : felt      # if a standard token
+    member registered : felt        # whether token registered to ZkLink or not, default is false
+    member paused : felt            # whether token can deposit to ZkLink or not, default is false
+    member tokenAddress : felt      # the token address
+    member standard : felt          # if a standard token
+    member mappingTokenId : felt    # eg. USDC -> USD, zero means no mapping token
 end
 
 # A map of token address to id, 0 is invalid token id
 @storage_var
 func token_ids(address : felt) -> (token_id : felt):
-end
-
-# A map of registered token infos
-@storage_var
-func tokens(token_id : felt) -> (token : RegisteredToken):
 end
 
 @view
@@ -400,6 +410,21 @@ func get_token_id{
     return (token_id=token_id)
 end
 
+
+func set_token_id{
+    syscall_ptr : felt*,
+    pedersen_ptr : HashBuiltin*,
+    range_check_ptr
+}(token_id : felt, token_address : felt) -> ():
+    token_ids.write(token_address, token_id)
+    return ()
+end
+
+# A map of registered token infos
+@storage_var
+func tokens(token_id : felt) -> (token : RegisteredToken):
+end
+
 @view
 func get_token{
     syscall_ptr : felt*,
@@ -410,32 +435,93 @@ func get_token{
     return (token=token)
 end
 
-# Used for debug
-@external
-func set_token_id{
+func set_token{
     syscall_ptr : felt*,
     pedersen_ptr : HashBuiltin*,
     range_check_ptr
-}(token_id : felt, token_address : felt) -> ():
-    token_ids.write(token_address, token_id)
+}(token_id : felt, rt : RegisteredToken) -> ():
+    tokens.write(token_id, rt)
     return ()
 end
 
-# @external
-# func set_token{
-#     syscall_ptr : felt*,
-#     pedersen_ptr : HashBuiltin*,
-#     range_check_ptr
-# }(token_id : felt, token_address : felt) -> ():
-#     let token = RegisteredToken(
-#         registered=1,
-#         paused=0,
-#         token_address=token_address,
+# We can set `enableBridgeTo` and `enableBridgeTo` to false to disable bridge when `bridge` is compromised
+struct BridgeInfo:
+    member bridge : felt    # bridge address
+    member enableBridgeTo : felt
+    member enableBridgeFrom : felt
+end
 
-#     )
-#     tokens.write(token_id, token)
-#     return ()
-# end
+@storage_var
+func bridge_length() -> (n : felt):
+end
+
+@view
+func get_bridge_length{
+    syscall_ptr : felt*,
+    pedersen_ptr : HashBuiltin*,
+    range_check_ptr
+}() -> (length : felt):
+    let (length) = bridge_length.read()
+    return (length)
+end
+
+@storage_var
+func bridges(index : felt) -> (info : BridgeInfo):
+end
+
+@view
+func get_bridge{
+    syscall_ptr : felt*,
+    pedersen_ptr : HashBuiltin*,
+    range_check_ptr
+}(index : felt) -> (info : BridgeInfo):
+    let (info : BridgeInfo) = bridges.read(index)
+    return (info)
+end
+
+func add_bridge{
+    syscall_ptr : felt*,
+    pedersen_ptr : HashBuiltin*,
+    range_check_ptr
+}(info : BridgeInfo):
+    let (index) = bridge_length.read()
+    bridges.write(index + 1, info)
+    bridge_length.write(index + 1)
+    return ()
+end
+
+func update_bridge{
+    syscall_ptr : felt*,
+    pedersen_ptr : HashBuiltin*,
+    range_check_ptr
+}(index : felt, info : BridgeInfo):
+    bridges.write(index, info)
+    return ()
+end
+
+@storage_var
+func bridgeIndex(address : felt) -> (index : felt):
+end
+
+@view
+func get_bridgeIndex{
+    syscall_ptr : felt*,
+    pedersen_ptr : HashBuiltin*,
+    range_check_ptr
+}(address : felt) -> (index : felt):
+    let (index) = bridgeIndex.read(address)
+    return (index)
+end
+
+func set_bridgeIndex{
+    syscall_ptr : felt*,
+    pedersen_ptr : HashBuiltin*,
+    range_check_ptr
+}(address : felt):
+    let (index) = bridge_length.read()
+    bridgeIndex.write(address, index)
+    return ()
+end
 
 # Accept infos of fast withdraw of account
 # uint32 is the account id
@@ -459,10 +545,36 @@ func set_accept{
     syscall_ptr : felt*,
     pedersen_ptr : HashBuiltin*,
     range_check_ptr
-}(accountId_and_hash : (felt, Uint256), address):
+}(accountId_and_hash : (felt, Uint256), address : felt):
     accepts.write(accountId_and_hash, address)
     return ()
 end
+
+# Broker allowance used in accept
+@storage_var
+func brokerAllowances(key : (felt, felt, felt)) -> (allowance : felt):
+end
+
+@view
+func get_brokerAllowances{
+    syscall_ptr : felt*,
+    pedersen_ptr : HashBuiltin*,
+    range_check_ptr
+}(key : (felt, felt, felt)) -> (allowance : felt):
+    let (allowance) = brokerAllowances.read(key)
+    return (allowance)
+end
+
+func set_brokerAllowances{
+    syscall_ptr : felt*,
+    pedersen_ptr : HashBuiltin*,
+    range_check_ptr
+}(key : (felt, felt, felt), allowance : felt):
+    accepts.write(key, allowance)
+    return ()
+end
+
+
 
 func only_delegate_call{syscall_ptr : felt*}():
     let (sender) = get_caller_address()
@@ -488,16 +600,20 @@ func get_validator{
     return (valid)
 end
 
-func add_validator{
+func set_validator{
     syscall_ptr : felt*,
     pedersen_ptr : HashBuiltin*,
     range_check_ptr
-}(address : felt):
-    validators.write(address, 1)
+}(address : felt, _active : felt):
+    validators.write(address, _active)
     return ()
 end
 
-func only_validator{syscall_ptr : felt*}():
+func only_validator{
+    syscall_ptr : felt*,
+    pedersen_ptr : HashBuiltin*,
+    range_check_ptr
+}():
     let (sender) = get_caller_address()
     let (valid) = get_validator(sender)
     with_attr error_message("4"):
@@ -532,7 +648,8 @@ struct StoredBlockInfo:
 end
 
 func parse_stored_block_info{range_check_ptr}(bytes : Bytes, _offset : felt) -> (new_offset : felt, res : StoredBlockInfo):
-    let (offset, block_number) = read_felt(bytes, _offset, 4)
+    alloc_locals
+    let (offset, local block_number) = read_felt(bytes, _offset, 4)
     let (offset, priority_operations) = read_felt(bytes, offset, 8)
     let (offset, pending_onchain_operations_hash : Uint256) = read_uint256(bytes, offset)
     let (offset, timestamp : Uint256) = read_uint256(bytes, offset)
@@ -558,13 +675,18 @@ func convert_stored_block_info_to_array(data : StoredBlockInfo) -> (n_elements :
 
     assert elements[0] = data.block_number
     assert elements[1] = data.priority_operations
-    assert elements[2] = data.pending_onchain_operations_hash
-    assert elements[3] = data.timestamp
-    assert elements[4] = data.state_hash
-    assert elements[5] = data.commitment
-    assert elements[6] = data.sync_hash
+    assert elements[2] = data.pending_onchain_operations_hash.low
+    assert elements[3] = data.pending_onchain_operations_hash.high
+    assert elements[4] = data.timestamp.low
+    assert elements[5] = data.timestamp.high
+    assert elements[6] = data.state_hash.low
+    assert elements[7] = data.state_hash.high
+    assert elements[8] = data.commitment.low
+    assert elements[9] = data.commitment.high
+    assert elements[10] = data.sync_hash.low
+    assert elements[11] = data.sync_hash.high
 
-    return (n_elements=7, elements=elements)
+    return (n_elements=12, elements=elements)
 end
 
 # Stored hashed StoredBlockInfo for some block number
@@ -591,6 +713,32 @@ func set_storedBlockHashes{
     return ()
 end
 
+# if `synchronizedChains` | CHAIN_INDEX equals to `ALL_CHAINS` defined in `Config.sol` then blocks at `blockHeight` and before it can be executed
+# the key is the `syncHash` of `StoredBlockInfo`
+# the value is the `synchronizedChains` of `syncHash` collected from all other chains
+@storage_var
+func synchronizedChains(key : Uint256) -> (value : Uint256):
+end
+
+@view
+func get_synchronizedChains{
+    syscall_ptr : felt*,
+    pedersen_ptr : HashBuiltin*,
+    range_check_ptr
+}(key : Uint256) -> (value : Uint256):
+    let (value : Uint256) = synchronizedChains.read(key)
+    return (value)
+end
+
+func set_synchronizedChains{
+    syscall_ptr : felt*,
+    pedersen_ptr : HashBuiltin*,
+    range_check_ptr
+}(key : felt, value : Uint256):
+    synchronizedChains.write(key, value)
+    return ()
+end
+
 # Root-chain balances (per owner and token id) to withdraw
 @storage_var
 func pendingBalances(owner_and_token_id : (felt, felt)) -> (balance : felt):
@@ -606,35 +754,84 @@ func get_pendingBalances{
     return (balance)
 end
 
-func add_pendingBalances{
+func increase_pendingBalances{
     syscall_ptr : felt*,
     pedersen_ptr : HashBuiltin*,
     range_check_ptr
-}(owner_and_token_id : (felt, felt), balance : felt):
-    pendingBalances.write(owner_and_token_id, balance)
+}(owner_and_token_id : (felt, felt), amount : felt):
+    pendingBalances.write(owner_and_token_id, amount)
+    return ()
+end
+
+# Flag indicates that a user has exited in the exodus mode certain token balance (accountId, subAccountId, tokenId, srcTokenId)
+@storage_var
+func performedExodus(key : (felt, felt, felt, felt)) -> (res : felt):
+end
+
+@view
+func get_performedExodus{
+    syscall_ptr : felt*,
+    pedersen_ptr : HashBuiltin*,
+    range_check_ptr
+}(key : (felt, felt, felt, felt)) -> (res : felt):
+    let (res) = performedExodus.read(key)
+    return (res)
+end
+
+func set_performedExodus{
+    syscall_ptr : felt*,
+    pedersen_ptr : HashBuiltin*,
+    range_check_ptr
+}(key : (felt, felt, felt, felt), value):
+    performedExodus.write(key, value)
     return ()
 end
 
 @storage_var
-func auth_facts(owner_and_nonce : (felt, felt)) -> (res : Uint256):
+func authFacts(owner_and_nonce : (felt, felt)) -> (res : Uint256):
 end
 
 @view
-func get_auth_facts{
+func get_authFacts{
     syscall_ptr : felt*,
     pedersen_ptr : HashBuiltin*,
     range_check_ptr
 }(owner_and_nonce : (felt, felt)) -> (res : Uint256):
-    let (res) = auth_facts.read(owner_and_nonce)
+    let (res) = authFacts.read(owner_and_nonce)
     return (res)
 end
 
-func add_auth_facts{
+func set_authFacts{
     syscall_ptr : felt*,
     pedersen_ptr : HashBuiltin*,
     range_check_ptr
 }(owner_and_nonce : (felt, felt), res : Uint256):
-    auth_facts.write(owner_and_nonce, res)
+    authFacts.write(owner_and_nonce, res)
+    return ()
+end
+
+# Timer for authFacts entry reset (address, nonce -> timer).
+# Used when user wants to reset `authFacts` for some nonce.
+@storage_var
+func authFactsResetTimer(owner_and_nonce : (felt, felt)) -> (res : Uint256):
+end
+
+@view
+func get_authFactsResetTimer{
+    syscall_ptr : felt*,
+    pedersen_ptr : HashBuiltin*,
+    range_check_ptr
+}(owner_and_nonce : (felt, felt)) -> (res : Uint256):
+    let (res) = authFactsResetTimer.read(owner_and_nonce)
+    return (res)
+end
+
+func set_authFactsResetTimer{
+    syscall_ptr : felt*,
+    pedersen_ptr : HashBuiltin*,
+    range_check_ptr
+}(owner_and_nonce : (felt, felt), res : Uint256):
+    authFactsResetTimer.write(owner_and_nonce, res)
     return ()
 end
 
@@ -658,5 +855,6 @@ func increaseBalanceToWithdraw{
     tempvar new_balance = balance + _amount
     assert_nn(new_balance - _amount)
 
-    add_pendingBalances(_packedBalanceKey, new_balance)
+    increase_pendingBalances(_packedBalanceKey, new_balance)
+    return ()
 end

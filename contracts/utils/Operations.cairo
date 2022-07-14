@@ -34,9 +34,9 @@ const AMOUNT_BYTES = 16         # amount is uint128
 
 # Priority operations: Deposit, FullExit
 struct PriorityOperation:
-    member hashed_pub_data : felt    # hashed priority operation public data
-    member expiration_block : felt      # expiration block number (ETH block) for this request (must be satisfied before)
-    member op_type : felt               # priority operation type
+    member hashedPubData : felt    # hashed priority operation public data
+    member expirationBlock : felt      # expiration block number (ETH block) for this request (must be satisfied before)
+    member opType : felt               # priority operation type
 end
 
 # Deposit Operation
@@ -93,12 +93,12 @@ end
 # Checks that deposit is same as operation in priority queue
 func check_deposit_with_priority_operation{range_check_ptr}(_deposit : DepositOperation, _priority_op : PriorityOperation):
     with_attr error_message("OP: not deposit"):
-        assert _priority_op.op_type = OpType.Deposit
+        assert _priority_op.opType = OpType.Deposit
     end
     with_attr error_message("OP: invalid deposit hash"):
         let (num, pub_data) = convert_deposit_operation_to_array(_deposit)
         let (hashed_pub_data) = hash_array_to_uint160(num, pub_data)
-        assert hashed_pub_data = _priority_op.hashed_pub_data
+        assert hashed_pub_data = _priority_op.hashedPubData
     end
 end
 
@@ -135,12 +135,12 @@ end
 # Checks that FullExit is same as operation in priority queue
 func check_fullexit_with_priority_operation{range_check_ptr}(_fullexit : FullExit, _priority_op : PriorityOperation):
     with_attr error_message("OP: not fullExit"):
-        assert _priority_op.op_type = OpType.FullExit
+        assert _priority_op.opType = OpType.FullExit
     end
     with_attr error_message("OP: invalid deposit hash"):
         let (num, pub_data) = convert_fullexit_operation_to_array(_fullexit)
         let (hashed_pub_data) = hash_array_to_uint160(num, pub_data)
-        assert hashed_pub_data = _priority_op.hashed_pub_data
+        assert hashed_pub_data = _priority_op.hashedPubData
     end
 end
 

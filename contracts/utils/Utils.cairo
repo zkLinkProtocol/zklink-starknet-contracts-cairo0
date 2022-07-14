@@ -76,41 +76,10 @@ func concat_two_hash{range_check_ptr, bitwise_ptr : BitwiseBuiltin*}(a : Uint256
     return (Uint256(0, 0))
 end
 
-# # read element in pubdata
-# # pubdata : array of felt, and every felt has PUBLIC_DATA_ELEMENT_BYTES bytes
-# # pubdata_len : length of pubdata array, it shold be OPERATION_CHUNK_SIZE
-# # bytes : size of data in bytes
-# func read_pubdata{range_check_ptr}(pubdata : felt*, _offset : felt, bytes : felt) -> (offset, data):
-#     # checks
-#     assert_nn_le(_offset, PUBLIC_DATA_ELEMENT_BYTES * OPERATION_CHUNK_SIZE)
-
-#     # data in one chunk or two chunks
-#     let (index, chunk_offset) = unsigned_div_rem(_offset, PUBLIC_DATA_ELEMENT_BYTES)
-#     let (one_chunk) = is_le(chunk_offset + bytes, PUBLIC_DATA_ELEMENT_BYTES)
-
-#     if one_chunk == 1:
-#         let (data1) = split_bytes(PUBLIC_DATA_ELEMENT_BYTES, pubdata[index], chunk_offset, bytes)
-#         return (_offset + bytes, data1)
-#     else:
-#         let (data2_1) = split_bytes(PUBLIC_DATA_ELEMENT_BYTES, pubdata[index], chunk_offset, PUBLIC_DATA_ELEMENT_BYTES - chunk_offset)
-#         let (data2_2) = split_bytes(PUBLIC_DATA_ELEMENT_BYTES, pubdata[index + 1], 0, bytes - PUBLIC_DATA_ELEMENT_BYTES + chunk_offset)
-#         let (data2) = join_bytes(data1, data2, bytes - PUBLIC_DATA_ELEMENT_BYTES + chunk_offset)
-#         return (_offset + bytes, data2)
-#     end
-
-# end
-
-# func slice_public_data{range_check_ptr}(pubdata : felt*, pubdata_offset : felt, size : felt) -> (data : felt*):
-#     alloc_locals
-#     let (local data : felt*) = alloc()
-#     _slice_public_data(pubdata=pubdata + pubdata_index, new_data=data, index=size, length=size)
-# end
-
-# func _slice_public_data{range_check_ptr}(pubdata : felt*, new_data : felt*, index : felt, length : felt):
-#     if index == 0:
-#         return ()
-#     end
-#     _slice_public_data(pubdata, new_data=new_data + 1, index=index - 1)
-#     assert new_data[0] = pubdata[lenght - index]
-#     return ()
-# end
+func hashBytesToBytes20{
+    range_check_ptr,
+    bitwise_ptr : BitwiseBuiltin*
+}(bytes : Bytes) -> (res : felt):
+    # TODO : keccak
+    return (0)
+end

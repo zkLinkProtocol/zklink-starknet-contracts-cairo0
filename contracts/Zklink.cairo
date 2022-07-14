@@ -3,14 +3,18 @@
 
 from starkware.cairo.common.cairo_keccak.keccak import finalize_keccak, keccak
 from starkware.cairo.common.alloc import alloc
-from starkware.cairo.common.uint256 import Uint256, uint256_sub, uint256_eq
+from starkware.cairo.common.uint256 import (
+    Uint256, uint256_sub, uint256_eq,
+    uint256_le, uint256_and, uint256_or,
+    uint256_not
+)
 from starkware.cairo.common.bitwise import bitwise_and, bitwise_or
 from openzeppelin.token.erc20.interfaces.IERC20 import IERC20
 from starkware.cairo.common.cairo_builtins import (
     HashBuiltin,
     BitwiseBuiltin
 )
-from starkware.cairo.common.math import assert_not_equal, assert_nn_le, unsigned_div_rem
+from starkware.cairo.common.math import assert_not_equal, assert_nn_le, unsigned_div_rem, assert_nn
 from starkware.cairo.common.math_cmp import is_not_zero, is_le, is_nn
 from starkware.cairo.common.pow import pow
 from starkware.cairo.common.default_dict import default_dict_new, default_dict_finalize
@@ -28,7 +32,9 @@ from starkware.starknet.common.syscalls import (
 from contracts.utils.Bytes import (
     Bytes,
     read_felt,
+    read_felt_array,
     read_uint256,
+    read_uint256_array,
     read_bytes,
     FELT_MAX_BYTES,
     split_bytes,
@@ -61,7 +67,8 @@ from contracts.utils.Utils import (
     uint256_to_felt,
     min_felt,
     concat_hash,
-    concat_two_hash
+    concat_two_hash,
+    hashBytesToBytes20
 )
 
 from contracts.utils.Config import (
@@ -71,6 +78,7 @@ from contracts.utils.Config import (
     EXODUS_MODE_ON,
     MAX_PRIORITY_REQUESTS,
     MAX_DEPOSIT_AMOUNT,
+    MAX_AMOUNT_OF_REGISTERED_TOKENS,
     MAX_ACCOUNT_ID,
     MAX_SUB_ACCOUNT_ID,
     PRIORITY_EXPIRATION,
@@ -87,19 +95,34 @@ from contracts.utils.Config import (
     WITHDRAW_BYTES,
     FORCED_EXIT_BYTES,
     CHANGE_PUBKEY_BYTES,
-    OPERATION_CHUNK_SIZE
+    OPERATION_CHUNK_SIZE,
+    AUTH_FACT_RESET_TIMELOCK,
+    INPUT_MASK_LOW,
+    INPUT_MASK_HIGH,
+    MAX_ACCEPT_FEE_RATE
 )
 
 from contracts.utils.Storage import (
     get_totalBlocksExecuted,
     increase_totalBlocksExecuted,
-    get_exodus_mode,
+    get_exodusMode,
+    set_exodusMode,
+    get_verifier_contract_address,
     set_verifier_contract_address,
     set_periphery_contract_address,
     set_network_governor_address,
     RegisteredToken,
     get_token_id,
+    set_token_id,
     get_token,
+    set_token,
+    BridgeInfo,
+    get_bridge_length,
+    get_bridge,
+    add_bridge,
+    update_bridge,
+    get_bridgeIndex,
+    set_bridgeIndex,
     get_totalBlocksCommitted,
     set_totalBlocksCommitted,
     get_totalBlocksProven,
@@ -122,26 +145,55 @@ from contracts.utils.Storage import (
     get_storedBlockHashes,
     set_storedBlockHashes,
     convert_stored_block_info_to_array,
+    get_synchronizedChains,
+    set_synchronizedChains,
     get_pendingBalances,
-    add_pendingBalances,
+    increase_pendingBalances,
     active,
+    not_active,
+    get_performedExodus,
+    set_performedExodus,
+    get_validator,
+    set_validator,
     only_validator,
     get_total_blocks_committed,
-    get_priority_requests,
-    get_auth_facts,
+    get_priorityRequests,
+    set_priorityRequests,
+    delete_priorityRequests,
+    get_authFacts,
+    set_authFacts,
+    get_authFactsResetTimer,
+    set_authFactsResetTimer,
     increaseBalanceToWithdraw,
     get_accept,
-    set_accept
+    set_accept,
+    get_network_governor_address,
+    set_network_governor_address,
+    only_governor,
+    get_brokerAllowances,
+    set_brokerAllowances
 )
 
 from contracts.utils.Events import (
-    new_priority_request,
-    with_draw,
-    block_commit,
+    NewPriorityRequest,
+    Withdrawal,
+    BlockCommit,
     BlocksRevert,
     WithdrawalPending,
-    BlockExecuted
+    BlockExecuted,
+    ExodusMode,
+    FactAuth,
+    NewGovernor,
+    NewToken,
+    TokenPausedUpdate,
+    ValidatorStatusUpdate,
+    AddBridge,
+    UpdateBridge,
+    Accept,
+    BrokerApprove
 )
+
+from contracts.utils.IVerifier import IVerifier
 
 from contracts.utils.ReentrancyGuard import (
     reentrancy_guard_init,
@@ -420,6 +472,209 @@ end
 # User interface
 #
 
+# Checks if Exodus mode must be entered. If true - enters exodus mode and emits ExodusMode event.
+# Exodus mode must be entered in case of current ethereum block number is higher than the oldest
+# of existed priority requests expiration block number.
+@external
+func activateExodusMode{
+    syscall_ptr : felt*,
+    pedersen_ptr : HashBuiltin*,
+    bitwise_ptr : BitwiseBuiltin*,
+    range_check_ptr
+}():
+    alloc_locals
+    # Lock with reentrancy_guard
+    reentrancy_guard_lock()
+    # check active
+    active()
+
+    let (local block_number) = get_block_number()
+    let (firstPriorityRequestId) = get_firstPriorityRequestId()
+    let (local priorityRequest : PriorityOperation) = get_priorityRequests(firstPriorityRequestId)
+    let (trigger1) = is_le(priorityRequest.expirationBlock, block_number)
+    let (trigger2) = is_not_zero(priorityRequest.expirationBlock)
+    if trigger1 + trigger2 == 2:
+        set_exodusMode(1)
+
+    end
+    # Unlock
+    reentrancy_guard_unlock()
+    return ()
+end
+
+# Withdraws token from ZkLink to root chain in case of exodus mode. User must provide proof that he owns funds
+# _storedBlockInfo: Last verified block
+# _owner: Owner of the account
+# _accountId: Id of the account in the tree
+# _subAccountId: Id of the subAccount in the tree
+# _proof: Proof
+# _tokenId: The token want to withdraw
+# _srcTokenId: The token deducted at l2
+# _amount: Amount for owner (must be total amount, not part of it)
+@external
+func performExodus{
+    syscall_ptr : felt*,
+    pedersen_ptr : HashBuiltin*,
+    bitwise_ptr : BitwiseBuiltin*,
+    range_check_ptr
+}(data_size : felt, data_len : felt, data : felt*,
+  proof_size : felt, proof_data_len : felt, proof_data : felt*):
+    alloc_locals
+    # Lock with reentrancy_guard
+    reentrancy_guard_lock()
+    # not active
+    not_active()
+
+    # parse calldata
+    tempvar bytes = Bytes(
+        _start=0,
+        bytes_per_felt=FELT_MAX_BYTES,
+        size=size,
+        data_length=data_len,
+        data=data
+    )
+    let (offset, local _storedBlockInfo : StoredBlockInfo) = parse_stored_block_info(bytes, 0)
+    let (offset, local _owner) = read_felt(bytes, offset, 20)
+    let (offset, local _accountId) = read_felt(bytes, offset, 4)
+    let (offset, local _subAccountId) = read_felt(bytes, offset, 1)
+    let (offset, local _tokenId) = read_felt(bytes, offset, 2)
+    let (offset, local _srcTokenId) = read_felt(bytes, offset, 2)
+    let (offset, local _amount) = read_felt(bytes, offset, 16)
+
+    # Checks
+    # performed exodus MUST not be already exited
+    with_attr error_message("y0"):
+        let (valid) = get_performedExodus((_accountId, _subAccountId, _tokenId, _srcTokenId))
+        assert valid = 0
+    end
+    # incorrect stored block info
+        with_attr error_message("y1"):
+        let (totalBlocksExecuted) = get_totalBlocksExecuted()
+        let (hash1 : Uint256) = get_storedBlockHashes(totalBlocksExecuted)
+        let (hash2 : Uint256) = hashStoredBlockInfo(_storedBlockInfo)
+        let (eq) = uint256_eq(hash1, hash2)
+        assert eq = 1
+    end
+    # exit proof MUST be correct
+    with_attr error_message("y2"):
+        let (address) = get_verifier_contract_address()
+        let (proofCorrect) = IVerifier.verifyExitProof(
+            contract_address=address
+            _rootHash=_storedBlockInfo.stateHash,
+            _chainId=CHAIN_ID,
+            _accountId=_accountId,
+            _subAccountId=_subAccountId,
+            _owner=_owner,
+            _tokenId=_tokenId,
+            _srcTokenId=_srcTokenId,
+            _amount=_amount,
+            size=proof_size,
+            data_len=proof_data_len,
+            data=proof_data
+        )
+        assert proofCorrect = 1
+    end
+
+    # Effects
+    set_performedExodus((_accountId, _subAccountId, _tokenId, _srcTokenId), 1)
+    increaseBalanceToWithdraw((_owner, _tokenId), _amount)
+    WithdrawalPending.emit(_tokenId, _owner, _amount)
+    # Unlock
+    reentrancy_guard_unlock()
+    return ()
+end
+
+# Accrues users balances from deposit priority requests in Exodus mode
+# WARNING: Only for Exodus mode
+# Canceling may take several separate transactions to be completed
+@external
+func cancelOutstandingDepositForExodusMode{
+    syscall_ptr : felt*,
+    pedersen_ptr : HashBuiltin*,
+    bitwise_ptr : BitwiseBuiltin*,
+    range_check_ptr
+}(size : felt, data_len : felt, data : felt*):
+    alloc_locals
+    # Lock with reentrancy_guard
+    reentrancy_guard_lock()
+    # not active
+    not_active()
+
+    # Effects
+    let (local id) = get_firstPriorityRequestId()
+    let (pr : PriorityOperation) = get_priorityRequests(id)
+    if pr.opType == OpType.Deposit:
+        tempvar bytes = Bytes(
+            _start=0,
+            bytes_per_felt=FELT_MAX_BYTES,
+            size=size,
+            data_length=data_len,
+            data=data
+        )
+        with_attr error_message("A1"):
+            let (hash) = hashBytesToBytes20(bytes)
+            assert hash = pr.hashedPubData
+        end
+
+        let (op : DepositOperation) = read_deposit_pubdata(bytes)
+        increaseBalanceToWithdraw((op.owner, op.token_id), op.amount)
+    end
+
+    delete_priorityRequests(id)
+    increase_firstPriorityRequestId(1)
+    sub_totalOpenPriorityRequests(1)
+    # Unlock
+    reentrancy_guard_unlock()
+    return ()
+end
+
+# Set data for changing pubkey hash using onchain authorization.
+# Transaction author (msg.sender) should be L2 account address
+# New pubkey hash can be reset, to do that user should send two transactions:
+# 1) First `setAuthPubkeyHash` transaction for already used `_nonce` will set timer.
+# 2) After `AUTH_FACT_RESET_TIMELOCK` time is passed second `setAuthPubkeyHash` transaction will reset pubkey hash for `_nonce`.
+# _pubkeyHash: New pubkey hash
+# _nonce: Nonce of the change pubkey L2 transaction
+@external
+func setAuthPubkeyHash{
+    syscall_ptr : felt*,
+    pedersen_ptr : HashBuiltin*,
+    bitwise_ptr : BitwiseBuiltin*,
+    range_check_ptr
+}(_pubkeyHash : felt, _nonce : felt):
+    alloc_locals
+    # PubKeyHash should be 20 bytes.
+    # TODO: check _pubkeyHash valid
+    let (local sender) = get_caller_address()
+    let (hash) = get_authFacts((sender, _nonce))
+    let (is_zero) = uint256(hash, Uint256(0, 0))
+    if is_zero == 1:
+        # TODO: keccak
+        let (h : Uint256) = keccak(&_pubkeyHash, 20)
+        set_authFacts((sender, _nonce), h)
+        FactAuth.emit(sender, _nonce, _pubkeyHash)
+    else:
+        let (local currentResetTimer : Uint256) = get_authFactsResetTimer((sender, _nonce))
+        # TODO: on starknet, timestamp should use felt
+        let (block_timestamp) = get_block_timestamp()
+        let timestamp = Uint256(block_timestamp, 0)
+        let (eq) = uint256(currentResetTimer, Uint256(0, 0))
+        if eq == 1:
+            set_authFactsResetTimer((sender, _nonce), timestamp)
+        else:
+            with_attr error_message("B1"):
+                let (time : Uint256) = uint256_sub(timestamp, currentResetTimer)
+                let (res) = uint256_le(AUTH_FACT_RESET_TIMELOCK, time)
+                assert res = 1
+            end
+            set_authFactsResetTimer((sender, _nonce), Uint256(0, 0))
+            let (h : Uint256) = keccak(&_pubkeyHash, 20)
+            set_authFacts((sender, _nonce), h)
+            FactAuth.emit(sender, _nonce, _pubkeyHash)
+        end
+    end
+end
+
 # Deposit ETH to Layer 2 - transfer ether from user into contract, validate it, register deposit.
 @external
 func deposit_ETH{
@@ -520,7 +775,7 @@ func request_full_exit{
     # to prevent ddos
     let (requests) = get_total_open_priority_requests()
     with_attr error_message("a3"):
-        assert_nn_le(requests, MAX_PRIORITY_REQUESTS-1)
+        assert_nn_le(requests, MAX_PRIORITY_REQUESTS - 1)
     end
 
     # Effects
@@ -546,7 +801,7 @@ end
 # NOTE: We will call ERC20.transfer(.., _amount), but if according to internal logic of ERC20 token zkLink contract
 # balance will be decreased by value more then _amount we will try to subtract this value from user pending balance
 @external
-func withdraw_pending_balance{
+func withdrawPendingBalance{
     syscall_ptr : felt*,
     pedersen_ptr : HashBuiltin*,
     bitwise_ptr : BitwiseBuiltin*,
@@ -569,10 +824,10 @@ func withdraw_pending_balance{
     end
 
     # Effects
-    add_pendingBalances((owner, token_id), balance - amount)    # amount <= balance
+    increase_pendingBalances((owner, token_id), balance - amount)    # amount <= balance
 
     # Interactions
-    let token_address = rt.token_address
+    let token_address = rt.tokenAddress
     let (amount : Uint256) = felt_to_uint256(_amount)
     let (max_amount : Uint256) = felt_to_uint256(balance)
     if token_address == ETH_ADDRESS:
@@ -582,9 +837,9 @@ func withdraw_pending_balance{
         let (amount_1 : Uint256) = transfer_ERC20(token_address, owner, amount, max_amount, rt.standard)
         if uint256_eq(amount, amount1) == 0:
             let pending_balance = uint256_to_felt(max_amount - amount1)
-            add_pendingBalances((owner, token_id), pending_balance)
+            increase_pendingBalances((owner, token_id), pending_balance)
             let amount2 = uint256_to_felt(amount1)
-            with_draw.emit(token_id=token_id, amount2)
+            Withdrawal.emit(token_id=token_id, amount2)
         end
     end
     # Unlock
@@ -683,18 +938,127 @@ func commit_compressed_block{
     _commit_block(_lastCommittedBlockData, new_block_data, true, _newBlockExtraData)
 end
 
-# struct ProofInput:
-#     member recursiveInput_len : felt
-#     member recursiveInput : Uint256*
-#     member proof_len : felt
-#     member proof : Uint256*
-#     member commitments_len : felt
-#     member commitments : Uint256*
-#     member vkIndexes_len : felt
-#     member vkIndexes : felt*
-#     member subproofsLimbs_len : felt
-#     member subproofsLimbs : Uint256*
-# end
+# Recursive proof input data (individual commitments are constructed onchain)
+# TODO: len as uint32 is ok?
+struct ProofInput:
+    member recursiveInput_len : felt
+    member recursiveInput : Uint256*
+    member proof_len : felt
+    member proof : Uint256*
+    member commitments_len : felt
+    member commitments : Uint256*
+    member vkIndexes_len : felt
+    member vkIndexes : felt*
+    member subproofsLimbs_len : felt
+    member subproofsLimbs : Uint256*
+end
+
+func parse_ProofInput{
+    range_check_ptr
+}(bytes : Bytes, _offset : felt) -> (new_offset : felt, res : ProofInput):
+    let (offset, local recursiveInput_len) = read_felt(bytes, _offset, 4)
+    let (offset, recursiveInput : Uint256*) = read_uint256_array(bytes, offset, recursiveInput_len)
+    let (offset, local proof_len) = read_felt(bytes, offset, 4)
+    let (offset, proof : Uint256*) = read_uint256_array(bytes, offset, proof_len)
+    let (offset, local commitments_len) = read_felt(bytes, offset, 4)
+    let (offset, commitments : Uint256*) = read_uint256_array(bytes, offset, commitments_len)
+    let (offset, local vkIndexes_len) = read_felt(bytes, offset, 4)
+    let (offset, vkIndexes : felt*) = read_felt_array(bytes, offset, vkIndexes_len, 1)
+    let (offset, local subproofsLimbs_len) = read_felt(bytes, offset, 4)
+    let (offset, subproofsLimbs : Uint256*) = read_uint256_array(bytes, offset, subproofsLimbs_len)
+
+    return (offset, ProofInput(
+        recursiveInput_len=recursiveInput_len,
+        recursiveInput=recursiveInput,
+        proof_len=proof_len,
+        proof=proof,
+        commitments_len=commitments_len,
+        commitments=commitments,
+        vkIndexes_len=vkIndexes_len,
+        vkIndexes=vkIndexes,
+        subproofsLimbs_len=subproofsLimbs_len,
+        subproofsLimbs=subproofsLimbs,
+    ))
+end
+
+# Blocks commitment verification.
+# Only verifies block commitments without any other processing
+@external
+func proveBlocks{
+    syscall_ptr : felt*,
+    pedersen_ptr : HashBuiltin*,
+    bitwise_ptr : BitwiseBuiltin*,
+    range_check_ptr
+}(
+    _committedBlocks_len : felt, _committedBlocks : StoredBlockInfo*,
+    proof_size : felt, proof_data_len : felt, proof_data : felt*
+):
+    alloc_locals
+    # Lock with reentrancy_guard
+    reentrancy_guard_lock()
+
+    tempvar bytes = Bytes(
+        _start=0,
+        bytes_per_felt=FELT_MAX_BYTES,
+        size=size,
+        data_length=data_len,
+        data=data
+    )
+    let (_, local _proof : ProofInput) = parse_ProofInput(bytes, 0)
+    # Checks
+    let (local currentTotalBlocksProven) = _proveBlocks(_committedBlocks, _proof, _committedBlocks_len - 1)
+
+    # Effects
+    with_attr error_message("x2"):
+        let (totalBlocksCommitted) = get_totalBlocksCommitted()
+        assert_nn_le(currentTotalBlocksProven, totalBlocksCommitted)
+    end
+    set_totalBlocksProven(currentTotalBlocksProven)
+
+    # Interactions
+    let (address) = get_verifier_contract_address()
+    let (success) = IVerifier.verifyAggregatedBlockProof(
+        contract_address=address,
+        size=proof_size,
+        data_len=proof_data_len,
+        data=proof_data
+    )
+
+    with_attr error_message("x3"):
+        assert success = 1
+    end
+    # Unlock
+    reentrancy_guard_unlock()
+    return ()
+end
+
+func _proveBlocks{
+    syscall_ptr : felt*,
+    pedersen_ptr : HashBuiltin*,
+    bitwise_ptr : BitwiseBuiltin*,
+    range_check_ptr
+}(_committedBlocks : StoredBlockInfo*, _proof : ProofInput, i) -> (newTotalBlocksProven : felt):
+    if i == -1:
+        let (currentTotalBlocksProven) = get_totalBlocksProven()
+        return (currentTotalBlocksProven)
+    end
+    let (old_TotalBlocksProven) = _proveBlocks(_committedBlocks, _proof, i - 1)
+    with_attr error_message("x0"):
+        let (hash1 : Uint256) = hashStoredBlockInfo(_committedBlocks[i])
+        let (hash2 : Uint256) = get_storedBlockHashes(old_TotalBlocksProven + 1)
+        let (eq) = uint256_eq(hash1, hash2)
+        assert eq = 1
+    end
+    with_attr error_message("x1"):
+        let (and1 : Uint256) = uint256_and(_proof.commitments[i], Uint256(INPUT_MASK_LOW, INPUT_MASK_HIGH))
+        let (and2 : Uint256) = uint256_add(_committedBlocks[i].commitment, Uint256(INPUT_MASK_LOW, INPUT_MASK_HIGH))
+        let (eq) = uint256_eq(and1, and2)
+        assert eq = 1
+    end
+    return (old_TotalBlocksProven + 1)
+end
+
+
 
 # Reverts unExecuted blocks
 @external
@@ -819,6 +1183,289 @@ func executeBlock{
 end
 
 #
+# Governance interface
+#
+
+# Change current governor
+@external
+func changeGovernor{
+    syscall_ptr : felt*,
+    pedersen_ptr : HashBuiltin*,
+    bitwise_ptr : BitwiseBuiltin*,
+    range_check_ptr
+}(_newGovernor : felt):
+    only_governor()
+    with_attr error_message("H"):
+        assert_not_equal(_newGovernor, 0)
+    end
+    let (networkGovernor) = get_network_governor_address()
+    if networkGovernor == _newGovernor:
+        return ()
+    else:
+        set_network_governor_address(_newGovernor)
+        NewGovernor.emit(_newGovernor)
+    end
+end
+
+# Add token to the list of networks tokens
+# _tokenId: Token id
+# _tokenAddress: Token address
+# _standard: If token is a standard erc20
+# _mappingTokenId: The mapping token id at l2
+func addToken{
+    syscall_ptr : felt*,
+    pedersen_ptr : HashBuiltin*,
+    bitwise_ptr : BitwiseBuiltin*,
+    range_check_ptr
+}(
+    _tokenId : felt,
+    _tokenAddress : felt,
+    _standard : felt,
+    _mappingTokenId : felt
+):
+    # token id MUST be in a valid range
+    with_attr error_message("I0"):
+        assert_nn(_tokenId - 1)
+        assert_nn_le(_tokenId - 1, MAX_AMOUNT_OF_REGISTERED_TOKENS)
+    end
+
+    # token MUST be not zero address
+    with_attr error_message("I1"):
+        assert_not_equal(_tokenAddress, 0)
+    end
+
+    # revert duplicate register
+    let (rt : RegisteredToken) = get_token(_tokenId)
+    with_attr error_message("I2"):
+        assert rt.registered = 0
+    end
+    with_attr error_message("I2"):
+        let (token_id) = get_token_id(_tokenAddress)
+        assert token_id = 0
+    end
+
+    let new_rt = RegisteredToken(
+        registered=1,
+        paused=0,
+        tokenAddress=_tokenAddress,
+        standard=_standard,
+        mappingTokenId=_mappingTokenId
+    )
+
+    set_token(_tokenId, new_rt)
+    set_token_id(_tokenAddress, _tokenId)
+
+    NewToken.emit(_tokenId, _tokenAddress)
+
+    return ()
+end
+
+# Add tokens to the list of networks tokens
+# _tokenIdList: Token id list
+# _tokenAddressList: Token address list
+# _standardList: Token standard list
+# _mappingTokenList: Mapping token list
+@external
+func addTokens{
+    syscall_ptr : felt*,
+    pedersen_ptr : HashBuiltin*,
+    bitwise_ptr : BitwiseBuiltin*,
+    range_check_ptr
+}(
+    _tokenIdList_len : felt,
+    _tokenIdList : felt*,
+    _tokenAddressList_len : felt,
+    _tokenAddressList : felt*,
+    _standardList_len : felt,
+    _standardList : felt,
+    _mappingTokenList_len : felt,
+    _mappingTokenList : felt*
+):
+    # TODO: add new err message
+    with_attr error_message("addTokens len"):
+        assert _tokenIdList_len = _tokenAddressList_len
+        assert _tokenAddressList_len = _standardList_len
+        assert _standardList_len = _mappingTokenList_len
+    end
+    let len = _tokenIdList_len
+    _addTokens(_tokenIdList, _tokenAddressList, _standardList, _mappingTokenList, len - 1)
+    return ()
+end
+
+func _addTokens{
+    syscall_ptr : felt*,
+    pedersen_ptr : HashBuiltin*,
+    bitwise_ptr : BitwiseBuiltin*,
+    range_check_ptr
+}(
+    _tokenIdList : felt*,
+    _tokenAddressList : felt*,
+    _standardList : felt,
+    _mappingTokenList : felt*,
+    i : felt
+):
+    if i == -1:
+        return ()
+    end
+    _addTokens(_tokenIdList, _tokenAddressList, _standardList, _mappingTokenList, i - 1)
+    addToken(_tokenIdList[i], _tokenAddressList[i], _standardList[i], _mappingTokenList[i])
+    return ()
+end
+
+# Pause token deposits for the given token
+# _tokenId: Token id
+# _tokenPaused: Token paused status
+@external
+func setTokenPaused{
+    syscall_ptr : felt*,
+    pedersen_ptr : HashBuiltin*,
+    bitwise_ptr : BitwiseBuiltin*,
+    range_check_ptr
+}(_tokenId : felt, _tokenPaused : felt):
+    alloc_locals
+    # only governor
+    only_governor()
+
+    let (local rt : RegisteredToken) = get_token(_tokenId)
+    with_attr error_message("K"):
+        assert rt.registered = 1
+    end
+
+    if rt.paused == _tokenPaused:
+        return ()
+    else:
+        let new_rt = RegisteredToken(
+            registered=rt.registered
+            paused=_tokenPaused,
+            tokenAddress=rt.tokenAddress,
+            standard=rt.standard,
+            mappingTokenId=rt.mappingTokenId
+        )
+        set_token(_tokenId, new_rt)
+        TokenPausedUpdate.emit(_tokenId, _tokenPaused)
+        return ()
+    end
+end
+
+# Change validator status (active or not active)
+# _validator: Validator address
+# _active: Active flag
+@external
+func setValidator{
+    syscall_ptr : felt*,
+    pedersen_ptr : HashBuiltin*,
+    bitwise_ptr : BitwiseBuiltin*,
+    range_check_ptr
+}(_validator : felt, _active : felt):
+    only_governor()
+
+    let (valid) = get_validator(_validator)
+    if valid == _active:
+        return ()
+    else:
+        set_validator(_validator, _active)
+        ValidatorStatusUpdate.emit(_validator, _active)
+    end
+end
+
+# Add a new bridge
+# bridge: the bridge contract
+@external
+func addBridge{
+    syscall_ptr : felt*,
+    pedersen_ptr : HashBuiltin*,
+    bitwise_ptr : BitwiseBuiltin*,
+    range_check_ptr
+}(bridge : felt):
+    only_governor()
+
+    with_attr error_message("L0"):
+        assert_not_zero(bridge)
+    end
+    # the index of non-exist bridge is zero
+    with_attr error_message("L1"):
+        let (index) = get_bridgeIndex(bridge)
+        assert index = 0
+    end
+
+    let info = BridgeInfo(
+        bridge=bridge,
+        enableBridgeTo=1,
+        enableBridgeFrom=1
+    )
+    add_bridge(info)
+    set_bridgeIndex(bridge)
+    AddBridge.emit(bridge)
+
+    return ()
+end
+
+# Update bridge info
+# If we want to remove a bridge(not compromised), we should firstly set `enableBridgeTo` to false
+# and wait all messages received from this bridge and then set `enableBridgeFrom` to false.
+# But when a bridge is compromised, we must set both `enableBridgeTo` and `enableBridgeFrom` to false immediately
+# index: the bridge info index
+# enableBridgeTo: if set to false, bridge to will be disabled
+# enableBridgeFrom: if set to false, bridge from will be disabled
+@external
+func updateBridge{
+    syscall_ptr : felt*,
+    pedersen_ptr : HashBuiltin*,
+    bitwise_ptr : BitwiseBuiltin*,
+    range_check_ptr
+}(index : felt, enableBridgeTo : felt, enableBridgeFrom : felt):
+    only_governor()
+
+    with_attr error_message("M"):
+        let (len) = get_bridge_length()
+        assert_lt(index, len)
+    end
+
+    let (info : BridgeInfo) = get_bridge(index)
+    let new_info = BridgeInfo(
+        bridge=info.bridge,
+        enableBridgeTo=enableBridgeTo,
+        enableBridgeFrom=enableBridgeFrom
+    )
+    update_bridge(index, new_info)
+    UpdateBridge.emit(index, enableBridgeTo, enableBridgeFrom)
+end
+
+@view
+func isBridgeToEnabled{
+    syscall_ptr : felt*,
+    pedersen_ptr : HashBuiltin*,
+    bitwise_ptr : BitwiseBuiltin*,
+    range_check_ptr
+}(bridge : felt) -> (enabled : felt):
+    let (index) = get_bridgeIndex(bridge)
+    let (info : BridgeInfo) = get_bridge(index)
+    if info.bridge == bridge:
+        if info.enableBridgeTo = 1:
+            return (1)
+    else:
+        return (0)
+    end
+end
+
+@view
+func isBridgeFromEnabled{
+    syscall_ptr : felt*,
+    pedersen_ptr : HashBuiltin*,
+    bitwise_ptr : BitwiseBuiltin*,
+    range_check_ptr
+}(bridge : felt) -> (enabled : felt):
+    let (index) = get_bridgeIndex(bridge)
+    let (info : BridgeInfo) = get_bridge(index)
+    if info.bridge = bridge:
+        if info.enableBridgeFrom = 1:
+            return (1)
+    else:
+        return (0)
+    end
+end
+
+#
 # Internal function
 #
 
@@ -893,30 +1540,30 @@ func add_priority_request{
     alloc_locals
     # Expiration block is: current block number + priority expiration delta, overflow is impossible
     let (block_number) = get_block_number()
-    local expiration_block = block_number + PRIORITY_EXPIRATION
+    local expirationBlock = block_number + PRIORITY_EXPIRATION
 
     # overflow is impossible
     let (first_priority_request_id) = get_firstPriorityRequestId()
     let (total_open_priority_requests) = get_totalOpenPriorityRequests()
     let next_priority_request_id = first_priority_request_id + total_open_priority_requests
 
-    let (hashed_pub_data) = hash_array_to_uint160(n_elements, pub_data)
+    let (hashedPubData) = hash_array_to_uint160(n_elements, pub_data)
 
     let op = PriorityOperation(
-        hashed_pub_data=hashed_pub_data,
-        expiration_block=expiration_block,
-        op_type=op_type
+        hashedPubData=hashedPubData,
+        expirationBlock=expirationBlock,
+        opType=op_type
     )
     set_priority_request(next_priority_request_id, op)
 
     let (sender) = get_caller_address() 
-    new_priority_request.emit(
+    NewPriorityRequest.emit(
         sender=sender,
-        serial_id=next_priority_request_id,
-        op_type=op_type,
-        pub_data_len=n_elements,
-        pub_data=pub_data,
-        expiration_block=expiration_block
+        serialId=next_priority_request_id,
+        opType=op_type,
+        pubData_len=n_elements,
+        pubData=pub_data,
+        expirationBlock=expiration_block
     )
     
     return ()
@@ -967,7 +1614,7 @@ func _commit_block{
         assert_nn_le(total_committed_priority_requests, total_open_priority_requests)
     end
 
-    block_number.emit(_lastCommittedBlockData.block_number)
+    BlockCommit.emit(_lastCommittedBlockData.block_number)
 
     # Unlock
     reentrancy_guard_unlock()
@@ -1272,7 +1919,7 @@ func check_onchain_op{
         let (op_pubdata : Bytes) = read_bytes(pub_data, public_data_offset, DEPOSIT_BYTES)
         if chain_id == CHAIN_ID:
             let (op : DepositOperation) = read_deposit_pubdata(op_pubdata)
-            let (pop : PriorityOperation) = get_priority_requests(next_priority_op_index)
+            let (pop : PriorityOperation) = get_priorityRequests(next_priority_op_index)
             check_deposit_with_priority_operation(op, pop)
             let (processable_pubdata : Bytes) = read_bytes(op_pubdata, 0, op_pubdata.size)
             return (priority_operations_processed=1, op_pubdata=op_pubdata, processable_pubdata=processable_pubdata)
@@ -1284,7 +1931,7 @@ func check_onchain_op{
                 let (op : ChangePubKey) = read_changepubkey_pubdata(op_pubdata)
                 let (processable_pubdata : Bytes) = read_bytes(op_pubdata, 0, op_pubdata.size)
                 if eth_witness.size == 0 :
-                    let (af : Uint256) = get_auth_facts((op.owner, op.nonce))
+                    let (af : Uint256) = get_authFacts((op.owner, op.nonce))
                     # TODO: keccak
                     return (priority_operations_processed=0, op_pubdata=op_pubdata, processable_pubdata=processable_pubdata)
                 else:
@@ -1308,7 +1955,7 @@ func check_onchain_op{
                         let (op_pubdata : Bytes) = read_bytes(pub_data, public_data_offset, FULL_EXIT_BYTES)
                         if chain_id == CHAIN_ID:
                             let (op : FullExit) = read_fullexit_pubdata(op_pubdata)
-                            let (pop : PriorityOperation) = get_priority_requests(next_priority_op_index)
+                            let (pop : PriorityOperation) = get_priorityRequests(next_priority_op_index)
                             check_fullexit_with_priority_operation(op, pop)
                             let (processable_pubdata : Bytes) = read_bytes(op_pubdata, 0, op_pubdata.size)
                             return (priority_operations_processed=1, op_pubdata=op_pubdata, processable_pubdata=processable_pubdata)
@@ -1407,7 +2054,7 @@ func _executeOneBlock{
     else:
         if op_type == OpType.ForcedExit:
             let (forcedexit : ForcedExit) = read_forcedexit_pubdata(pubData)
-            withdrawOrStore(op.tokenId, op.target, op.amount);
+            withdrawOrStore(op.tokenId, op.target, op.amount)
         else:
             if op_type == OpType.FullExit:
                 let (fullexit : FullExit) = read_fullexit_pubdata(pubData)
@@ -1515,4 +2162,287 @@ func createBlockCommitment{range_check_ptr}(
 ) -> (commitment : Uint256):
     # TODO: sha256
     return Uint256(0, 0)
+end
+
+#
+# Cross chain block synchronization
+#
+
+# Combine the `progress` of the other chains of a `syncHash` with self
+@external
+func receiveSynchronizationProgress{
+    syscall_ptr : felt*,
+    pedersen_ptr : HashBuiltin*,
+    bitwise_ptr : BitwiseBuiltin*,
+    range_check_ptr
+}(syncHash : Uint256, progress : Uint256):
+    with_attr error_message("C"):
+        let (sender) = get_caller_address()
+        let (enabled) = isBridgeFromEnabled(sender)
+        assert enabled = 1
+    end
+
+    let (old_synchronizedChains) = get_synchronizedChains(syncHash)
+    let (new_synchronizedChains) = uint256_or(old_synchronizedChains, progress)
+    set_synchronizedChains(syncHash, new_synchronizedChains)
+    return ()
+end
+
+# Get synchronized progress of current chain known
+@view
+func getSynchronizedProgress{
+    syscall_ptr : felt*,
+    pedersen_ptr : HashBuiltin*,
+    bitwise_ptr : BitwiseBuiltin*,
+    range_check_ptr
+}(_block : StoredBlockInfo) -> (progress : Uint256):
+    let (progress) = get_synchronizedChains(_block.sync_hash)
+    # combine the current chain if it has proven this block
+    let (totalBlocksProven) = get_totalBlocksProven()
+    let (le) = is_le(_block.block_number, totalBlocksProven)
+    if le == 1:
+        let (hash1 : Uint256) = hashStoredBlockInfo(_block)
+        let (hash2 : Uint256) = get_storedBlockHashes(_block.block_number)
+        let (eq) = uint256_eq(hash1, hash2)
+        if eq == 1:
+            let (new_progress) = uint256_or(progress, CHAIN_INDEX)
+            return (new_progress)
+        end
+    else:
+        let (new_chain_index : Uint256) = uint256_not(Uint256(CHAIN_INDEX, 0))
+        let (new_progress) = uint256_and(progress, CHAIN_INDEX)
+        return (new_progress)
+    end
+end
+
+# Check if received all syncHash from other chains at the block height
+@external
+func syncBlocks{
+    syscall_ptr : felt*,
+    pedersen_ptr : HashBuiltin*,
+    bitwise_ptr : BitwiseBuiltin*,
+    range_check_ptr
+}(_block : StoredBlockInfo):
+    # Lock with reentrancy_guard
+    reentrancy_guard_lock()
+
+    with_attr error_message("D0"):
+        let (progress : Uint256) = getSynchronizedProgress(_block)
+        let (eq) = uint256_eq(progress, Uint256(ALL_CHAINS, 0))
+        assert eq = 1
+    end
+
+    with_attr error_message("D1"):
+        let (totalBlocksSynchronized) = get_totalBlocksSynchronized()
+        assert_lt(totalBlocksSynchronized, _block.block_number)
+    end
+
+    set_totalBlocksSynchronized(_block.block_number)
+
+    # Unlock
+    reentrancy_guard_unlock()
+    return ()
+end
+
+#
+# Fast withdraw and Accept
+#
+
+# # Accepter accept a eth fast withdraw, accepter will get a fee for profit
+# # accepter: Accepter who accept a fast withdraw
+# # accountId: Account that request fast withdraw
+# # receiver: User receive token from accepter (the owner of withdraw operation)
+# # amount: The amount of withdraw operation
+# # withdrawFeeRate: Fast withdraw fee rate taken by accepter
+# # nonce: Account nonce, used to produce unique accept info
+# @external
+# func acceptETH{
+#     syscall_ptr : felt*,
+#     pedersen_ptr : HashBuiltin*,
+#     bitwise_ptr : BitwiseBuiltin*,
+#     range_check_ptr
+# }(
+#     accountId : felt,
+#     receiver : felt,
+#     amount : felt,
+#     withdrawFeeRate : felt,
+#     nonce : felt
+# ):
+#     # Lock with reentrancy_guard
+#     reentrancy_guard_lock()
+
+#     # Checks
+#     let (tokenId) = get_token_id(ETH_ADDRESS)
+#     let (amountReceive, hash : Uint256, _) = _checkAccept(
+#         accepter, accountId, receiver, tokenId, amount, withdrawFeeRate, nonce)
+    
+#     # Effects
+#     set_accept((accountId, hash), accepter)
+
+#     # Interactions
+#     # make sure msg value >= amountReceive
+
+
+#     # Unlock
+#     reentrancy_guard_unlock()
+#     return ()
+# end
+
+# Accepter accept a erc20 token fast withdraw, accepter will get a fee for profit
+# accepter Accepter who accept a fast withdraw
+# accountId Account that request fast withdraw
+# receiver User receive token from accepter (the owner of withdraw operation)
+# tokenId Token id
+# amount The amount of withdraw operation
+# withdrawFeeRate Fast withdraw fee rate taken by accepter
+# nonce Account nonce, used to produce unique accept info
+# amountTransfer Amount that transfer from accepter to receiver
+# may be a litter larger than the amount receiver received
+@external
+func acceptERC20{
+    syscall_ptr : felt*,
+    pedersen_ptr : HashBuiltin*,
+    bitwise_ptr : BitwiseBuiltin*,
+    range_check_ptr
+}(
+    accepter : felt
+    accountId : felt,
+    receiver : felt,
+    tokenId : felt
+    amount : felt,
+    withdrawFeeRate : felt,
+    nonce : felt,
+    amountTransfer : felt
+):
+    # Lock with reentrancy_guard
+    reentrancy_guard_lock()
+
+    # Checks
+    let (amountReceive : felt, hash : Uint256, tokenAddress) = _checkAccept(
+        accepter, accountId, receiver, tokenId, amount, withdrawFeeRate, nonce)
+
+    # Effects
+    set_accept((accountId, hash), accepter)
+
+    # Interactions
+    let (receiverBalanceBefore : Uint256) = IERC20.balanceOf(contract_address=tokenAddress, acount=receiver)
+    let (accepterBalanceBefore : Uint256) = IERC20.balanceOf(contract_address=tokenAddress, acount=accepter)
+    IERC20.transferFrom(
+        contract_address=tokenAddress,
+        sender=accepter,
+        recipient=receiver,
+        amount=Uint256(amountTransfer, 0)
+    )
+    let (receiverBalanceAfter : Uint256) = IERC20.balanceOf(contract_address=tokenAddress, acount=receiver)
+    let (accepterBalanceAfter : Uint256) = IERC20.balanceOf(contract_address=tokenAddress, acount=accepter)
+    let (receiverBalanceDiff : Uint256) = uint256_sub(receiverBalanceAfter, receiverBalanceBefore)
+    let (receiverBalanceDiff) = uint256_to_felt(receiverBalanceDiff)
+    with_attr error_message("F0"):
+        assert_le(amountReceive, receiverBalanceDiff)
+    end
+    tempvar amountReceive = receiverBalanceDiff
+    let (accepterBalanceDiff) = uint256_sub(accepterBalanceAfter, accepterBalanceBefore)
+    let (local amountSent) = uint256_to_felt(accepterBalanceDiff)
+
+    let (local sender) = get_caller_address()
+    if sender == accepter:
+        # Do nothing
+    else:
+        let (local old_allowance) = brokerAllowance(tokenId, accepter, sneder)
+        with_attr error_message("F1"):
+            assert_le(amountSent, allowance)
+        end
+        set_brokerAllowances((tokenId, accepter, sender), old_allowance - amountSent)
+    end
+
+    Accept.emit(accepter, accountId, receiver, tokenId, amountSent, amountReceive)
+
+    # Unlock
+    reentrancy_guard_unlock()
+    return ()
+end
+
+@view
+func brokerAllowance{
+    syscall_ptr : felt*,
+    pedersen_ptr : HashBuiltin*,
+    bitwise_ptr : BitwiseBuiltin*,
+    range_check_ptr
+}(tokenId : felt, owner : felt, spender : felt) -> (res : felt):
+    let (allowance) = get_brokerAllowances((tokenId, owner, spender))
+    return (allowance)
+end
+
+# Give allowance to spender to call accept
+@external
+func brokerApprove{
+    syscall_ptr : felt*,
+    pedersen_ptr : HashBuiltin*,
+    bitwise_ptr : BitwiseBuiltin*,
+    range_check_ptr
+}(tokenId : felt, spender : felt, amount : felt) -> (res : felt):
+    with_attr error_message("G"):
+        assert_not_zero(spender)
+    end
+    let (sender) = get_caller_address()
+    set_brokerAllowances((tokenId, sender, spender), amount)
+    BrokerApprove.emit(tokenId, sender, spender, amount)
+    return (1)
+end
+
+@view
+func _checkAccept{
+    syscall_ptr : felt*,
+    pedersen_ptr : HashBuiltin*,
+    bitwise_ptr : BitwiseBuiltin*,
+    range_check_ptr
+}(
+    accepter : felt,
+    accountId : felt,
+    receiver : felt,
+    tokenId : felt
+    amount : felt,
+    withdrawFeeRate : felt,
+    nonce : felt
+) -> (amountReceive : felt, hash : Uint256, tokenAddress : felt):
+    active()
+
+    # accepter and receiver MUST be set and MUST not be the same
+    with_attr error_message("H0"):
+        assert_not_zero(accepter)
+    end
+    with_attr error_message("H1"):
+        assert_not_zero(receiver)
+    end
+    with_attr error_message("H2"):
+        assert_not_equal(accepter, receiver)
+    end
+
+    # token MUST be registered to ZkLink
+    let (rt : RegisteredToken) = get_token(tokenId)
+    with_attr error_message("H3"):
+        assert rt.registered = 1
+    end
+    tempvar tokenAddress = rt.tokenAddress
+
+    # feeRate MUST be valid
+    with_attr error_message("H4"):
+        assert_lt(withdrawFeeRate, MAX_ACCEPT_FEE_RATE)
+    end
+    tempvar amountReceive = amount * (MAX_ACCEPT_FEE_RATE - withdrawFeeRate) / MAX_ACCEPT_FEE_RATE
+
+    # nonce MUST not be zero
+    with_attr error_message("H5"):
+        assert_not_zero(nonce)
+    end
+
+    # accept tx may be later than block exec tx(with user withdraw op)
+    # TODO: keccak
+    let hash = Uint256(0, 0)
+    with_attr error_message("H6"):
+        let (valid) = get_accept((accountId, hash))
+        assert valid = 0
+    end
+
+    return (amountReceive, hash, tokenAddress)
 end

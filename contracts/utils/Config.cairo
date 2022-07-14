@@ -13,6 +13,9 @@ const EXODUS_MODE_ON = 1
 # Max deposit of ERC20 token that is possible to deposit
 const MAX_DEPOSIT_AMOUNT = 2 ** 104 - 1
 
+# Max amount of tokens registered in the network
+const MAX_AMOUNT_OF_REGISTERED_TOKENS = 4096
+
 # Max account id that could be registered in the network
 const MAX_ACCOUNT_ID = 2 ** 24 - 1
 
@@ -60,6 +63,14 @@ const COMMIT_TIMESTAMP_NOT_OLDER = 86400 # 24h
 # Must be used cause miner's `block.timestamp` value can differ on some small value (as we know - 15 seconds)
 const COMMIT_TIMESTAMP_APPROXIMATION_DELTA = 900 # 15min
 
+# Bit mask to apply for verifier public input before verifying.
+# TODO: $$(~uint256(0) >> 3)
+const INPUT_MASK_LOW = 1
+const INPUT_MASK_HIGH = 1
+
+# Auth fact reset timelock
+const AUTH_FACT_RESET_TIMELOCK = 86400 # 1 days
+
 # Maximum number of priority request that wait to be proceed
 # to prevent an attacker submit a large number of priority requests
 # that exceeding the processing power of the l2 server
@@ -84,6 +95,9 @@ const ALL_CHAINS = 15
 # TODO: It should be a storage_var instead of constant
 # Because of ETH address is different between testnet and mainnet
 const ETH_ADDRESS = 0x49d36570d4e46f48e99674bd3fcc84644ddd6b96f7c741b1562b82f9e004dc7
+
+# When set fee = 100, it means 1%
+const MAX_ACCEPT_FEE_RATE = 10000
 
 # see EIP-712
 # keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)");
