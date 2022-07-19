@@ -43,10 +43,11 @@ func hash_array_to_uint256{
     return (res=hash)
 end
 
-# Convert felt to Uint256, felt should less than 2 ** 128 - 1
+# Convert felt to Uint256, felt should less than 2 ** 256 - 1
 func felt_to_uint256{range_check_ptr}(input : felt) -> (output : Uint256):
-    assert_nn_le(input, 2 ** 128 - 1)
-    let output = Uint256(low=input, high=0)
+    assert_nn_le(input, 2 ** 256 - 1)
+    let (high, low) = unsigned_div_rem(input, 2 ** 128)
+    let output = Uint256(low=low, high=high)
     return (output)
 end
 

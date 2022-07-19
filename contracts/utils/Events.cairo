@@ -9,7 +9,7 @@ func NewPriorityRequest(
     opType : felt,
     pubData_len : felt,
     pubData : felt*,
-    expirationBlock : felt
+    expirationBlock : Uint256
 ):
 end
 

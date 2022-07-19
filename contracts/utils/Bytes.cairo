@@ -98,7 +98,7 @@ func _read_felt_array{range_check_ptr}(
         return (offset)
     end
     let (old_offset) = _read_felt_array(bytes, offset, array, i - 1, element_size)
-    let (new_offset, data) = read_felt(bytes, new_offset, element_size)
+    let (new_offset, data) = read_felt(bytes, old_offset, element_size)
     assert array[i] = data
     return (new_offset)
 end
@@ -132,14 +132,14 @@ end
 func _read_uint256_array{range_check_ptr}(
     bytes : Bytes,
     offset : felt,
-    array : felt*,
+    array : Uint256*,
     i : felt,
 ) -> (new_offset : felt):
     if i == -1:
         return (offset)
     end
     let (old_offset) = _read_uint256_array(bytes, offset, array, i - 1)
-    let (new_offset, data : Uint256) = read_uint256(bytes, new_offset)
+    let (new_offset, data : Uint256) = read_uint256(bytes, old_offset)
     assert array[i] = data
     return (new_offset)
 end

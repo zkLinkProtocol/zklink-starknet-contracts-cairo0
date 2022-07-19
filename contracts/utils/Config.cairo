@@ -82,14 +82,20 @@ const MAX_PRIORITY_REQUESTS = 4096
 # Enable commit a compressed block
 const ENABLE_COMMIT_COMPRESSED_BLOCK = 1
 
+# Chain id defined by ZkLink
+const CHAIN_ID = 5
+
 # Min chain id defined by ZkLink
 const MIN_CHAIN_ID = 1
 
 # Max chain id defined by ZkLink
-const MAX_CHAIN_ID = 4
+const MAX_CHAIN_ID = 5
 
 # All chain index, for example [1, 2, 3, 4] => 1 << 0 | 1 << 1 | 1 << 2 | 1 << 3 = 15
-const ALL_CHAINS = 15
+const ALL_CHAINS = 31
+
+# Chain index, CHAIN_ID is non-zero value
+const CHAIN_INDEX = 31
 
 # Address represent eth when deposit or withdraw
 # TODO: It should be a storage_var instead of constant

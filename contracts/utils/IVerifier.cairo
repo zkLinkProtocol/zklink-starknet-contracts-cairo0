@@ -1,5 +1,7 @@
 %lang starknet
 
+from starkware.cairo.common.uint256 import Uint256
+
 @contract_interface
 namespace IVerifier:
     func verifyAggregatedBlockProof(size : felt, data_len : felt, data : felt*) -> (res : felt):

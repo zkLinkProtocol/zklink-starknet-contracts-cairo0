@@ -2,6 +2,7 @@
 %lang starknet
 
 from starkware.cairo.common.alloc import alloc
+from starkware.cairo.common.cairo_builtins import BitwiseBuiltin
 from starkware.cairo.common.uint256 import Uint256, uint256_eq
 from contracts.utils.Utils import hash_array_to_uint160
 from contracts.utils.Bytes import Bytes, read_felt
@@ -55,13 +56,14 @@ const PACKED_DEPOSIT_PUBDATA_BYTES = OP_TYPE_BYTES + CHAIN_BYTES + ACCOUNT_ID_BY
 
 # Deserialize deposit pubdata
 func read_deposit_pubdata{range_check_ptr}(op_pubdata : Bytes) -> (parsed : DepositOperation):
-    let (offset, chain_id) = read_felt(op_pubdata, OP_TYPE_BYTES, CHAIN_BYTES)
-    let (offset, account_id) = read_felt(op_pubdata, offset, ACCOUNT_ID_BYTES)
-    let (offset, sub_account_id) = read_felt(op_pubdata, offset, SUB_ACCOUNT_ID_BYTES)
-    let (offset, token_id) = read_felt(op_pubdata, offset, TOKEN_BYTES)
-    let (offset, target_token_id) = read_felt(op_pubdata, offset, TOKEN_BYTES)
-    let (offset, amount) = read_felt(op_pubdata, offset, AMOUNT_BYTES)
-    let (offset, owner) = read_felt(op_pubdata, offset, ADDRESS_BYTES)
+    alloc_locals
+    let (offset, local chain_id) = read_felt(op_pubdata, OP_TYPE_BYTES, CHAIN_BYTES)
+    let (offset, local account_id) = read_felt(op_pubdata, offset, ACCOUNT_ID_BYTES)
+    let (offset, local sub_account_id) = read_felt(op_pubdata, offset, SUB_ACCOUNT_ID_BYTES)
+    let (offset, local token_id) = read_felt(op_pubdata, offset, TOKEN_BYTES)
+    let (offset, local target_token_id) = read_felt(op_pubdata, offset, TOKEN_BYTES)
+    let (offset, local amount) = read_felt(op_pubdata, offset, AMOUNT_BYTES)
+    let (offset, local owner) = read_felt(op_pubdata, offset, ADDRESS_BYTES)
 
     let parsed = DepositOperation(
         chain_id=chain_id,
@@ -91,7 +93,10 @@ func convert_deposit_operation_to_array(op : DepositOperation) -> (n_elements : 
 end
 
 # Checks that deposit is same as operation in priority queue
-func check_deposit_with_priority_operation{range_check_ptr}(_deposit : DepositOperation, _priority_op : PriorityOperation):
+func check_deposit_with_priority_operation{
+    bitwise_ptr : BitwiseBuiltin*,
+    range_check_ptr
+}(_deposit : DepositOperation, _priority_op : PriorityOperation):
     with_attr error_message("OP: not deposit"):
         assert _priority_op.opType = OpType.Deposit
     end
@@ -100,6 +105,7 @@ func check_deposit_with_priority_operation{range_check_ptr}(_deposit : DepositOp
         let (hashed_pub_data) = hash_array_to_uint160(num, pub_data)
         assert hashed_pub_data = _priority_op.hashedPubData
     end
+    return ()
 end
 
 # FullExit Operation
@@ -114,12 +120,13 @@ end
 
 # Deserialize fullExit pubdata
 func read_fullexit_pubdata{range_check_ptr}(op_pubdata : Bytes) -> (parsed : FullExit):
-    let (offset, chain_id) = read_felt(op_pubdata, OP_TYPE_BYTES, CHAIN_BYTES)
-    let (offset, account_id) = read_felt(op_pubdata, offset, ACCOUNT_ID_BYTES)
-    let (offset, sub_account_id) = read_felt(op_pubdata, offset, SUB_ACCOUNT_ID_BYTES)
-    let (offset, owner) = read_felt(op_pubdata, offset, ADDRESS_BYTES)
-    let (offset, token_id) = read_felt(op_pubdata, offset, TOKEN_BYTES)
-    let (offset, amount) = read_felt(op_pubdata, offset, AMOUNT_BYTES)
+    alloc_locals
+    let (offset, local chain_id) = read_felt(op_pubdata, OP_TYPE_BYTES, CHAIN_BYTES)
+    let (offset, local account_id) = read_felt(op_pubdata, offset, ACCOUNT_ID_BYTES)
+    let (offset, local sub_account_id) = read_felt(op_pubdata, offset, SUB_ACCOUNT_ID_BYTES)
+    let (offset, local owner) = read_felt(op_pubdata, offset, ADDRESS_BYTES)
+    let (offset, local token_id) = read_felt(op_pubdata, offset, TOKEN_BYTES)
+    let (offset, local amount) = read_felt(op_pubdata, offset, AMOUNT_BYTES)
 
     let parsed = FullExit(
         chain_id=chain_id,
@@ -133,7 +140,10 @@ func read_fullexit_pubdata{range_check_ptr}(op_pubdata : Bytes) -> (parsed : Ful
 end
 
 # Checks that FullExit is same as operation in priority queue
-func check_fullexit_with_priority_operation{range_check_ptr}(_fullexit : FullExit, _priority_op : PriorityOperation):
+func check_fullexit_with_priority_operation{
+    bitwise_ptr : BitwiseBuiltin*,
+    range_check_ptr
+}(_fullexit : FullExit, _priority_op : PriorityOperation):
     with_attr error_message("OP: not fullExit"):
         assert _priority_op.opType = OpType.FullExit
     end
@@ -142,6 +152,7 @@ func check_fullexit_with_priority_operation{range_check_ptr}(_fullexit : FullExi
         let (hashed_pub_data) = hash_array_to_uint160(num, pub_data)
         assert hashed_pub_data = _priority_op.hashedPubData
     end
+    return ()
 end
 
 func convert_fullexit_operation_to_array(op : FullExit) -> (n_elements : felt, elements : felt*):
@@ -172,13 +183,14 @@ end
 
 # Deserialize Withdraw pubdata
 func read_withdraw_pubdata{range_check_ptr}(op_pubdata : Bytes) -> (parsed : Withdraw):
-    let (offset, chainId) = read_felt(op_pubdata, OP_TYPE_BYTES, CHAIN_BYTES)
-    let (offset, accountId) = read_felt(op_pubdata, offset, ACCOUNT_ID_BYTES)
-    let (offset, tokenId) = read_felt(op_pubdata, offset, TOKEN_BYTES)
-    let (offset, amount) = read_felt(op_pubdata, offset, AMOUNT_BYTES)
-    let (offset, owner) = read_felt(op_pubdata, offset, ADDRESS_BYTES)
-    let (offset, nonce) = read_felt(op_pubdata, offset, NONCE_BYTES)
-    let (_, fastWithdrawFeeRate) = read_felt(op_pubdata, offset, 2)
+    alloc_locals
+    let (offset, local chainId) = read_felt(op_pubdata, OP_TYPE_BYTES, CHAIN_BYTES)
+    let (offset, local accountId) = read_felt(op_pubdata, offset, ACCOUNT_ID_BYTES)
+    let (offset, local tokenId) = read_felt(op_pubdata, offset, TOKEN_BYTES)
+    let (offset, local amount) = read_felt(op_pubdata, offset, AMOUNT_BYTES)
+    let (offset, local owner) = read_felt(op_pubdata, offset, ADDRESS_BYTES)
+    let (offset, local nonce) = read_felt(op_pubdata, offset, NONCE_BYTES)
+    let (_, local fastWithdrawFeeRate) = read_felt(op_pubdata, offset, 2)
     
 
     let parsed = Withdraw(
@@ -202,10 +214,11 @@ end
 
 # Deserialize ForcedExit pubdata
 func read_forcedexit_pubdata{range_check_ptr}(op_pubdata : Bytes) -> (parsed : ForcedExit):
-    let (offset, chainId) = read_felt(op_pubdata, OP_TYPE_BYTES, CHAIN_BYTES)
-    let (offset, tokenId) = read_felt(op_pubdata, offset, TOKEN_BYTES)
-    let (offset, amount) = read_felt(op_pubdata, offset, AMOUNT_BYTES)
-    let (offset, target) = read_felt(op_pubdata, offset, ADDRESS_BYTES)
+    alloc_locals
+    let (offset, local chainId) = read_felt(op_pubdata, OP_TYPE_BYTES, CHAIN_BYTES)
+    let (offset, local tokenId) = read_felt(op_pubdata, offset, TOKEN_BYTES)
+    let (offset, local amount) = read_felt(op_pubdata, offset, AMOUNT_BYTES)
+    let (offset, local target) = read_felt(op_pubdata, offset, ADDRESS_BYTES)
     
 
     let parsed = ForcedExit(
@@ -228,11 +241,12 @@ end
 
 # Deserialize ChangePubKey pubdata
 func read_changepubkey_pubdata{range_check_ptr}(op_pubdata : Bytes) -> (parsed : ChangePubKey):
-    let (offset, chain_id) = read_felt(op_pubdata, OP_TYPE_BYTES, CHAIN_BYTES)
-    let (offset, account_id) = read_felt(op_pubdata, offset, ACCOUNT_ID_BYTES)
-    let (offset, pubkey_hash) = read_felt(op_pubdata, offset, 20)
-    let (offset, owner) = read_felt(op_pubdata, offset, ADDRESS_BYTES)
-    let (offset, nonce) = read_felt(op_pubdata, offset, NONCE_BYTES)
+    alloc_locals
+    let (offset, local chain_id) = read_felt(op_pubdata, OP_TYPE_BYTES, CHAIN_BYTES)
+    let (offset, local account_id) = read_felt(op_pubdata, offset, ACCOUNT_ID_BYTES)
+    let (offset, local pubkey_hash) = read_felt(op_pubdata, offset, 20)
+    let (offset, local owner) = read_felt(op_pubdata, offset, ADDRESS_BYTES)
+    let (offset, local nonce) = read_felt(op_pubdata, offset, NONCE_BYTES)
 
     let parsed = ChangePubKey(
         chain_id=chain_id,

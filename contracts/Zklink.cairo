@@ -6,15 +6,17 @@ from starkware.cairo.common.alloc import alloc
 from starkware.cairo.common.uint256 import (
     Uint256, uint256_sub, uint256_eq,
     uint256_le, uint256_and, uint256_or,
-    uint256_not
+    uint256_not, uint256_lt
 )
 from starkware.cairo.common.bitwise import bitwise_and, bitwise_or
 from openzeppelin.token.erc20.interfaces.IERC20 import IERC20
+from openzeppelin.security.initializable import Initializable
+from openzeppelin.security.reentrancyguard import ReentrancyGuard
 from starkware.cairo.common.cairo_builtins import (
     HashBuiltin,
     BitwiseBuiltin
 )
-from starkware.cairo.common.math import assert_not_equal, assert_nn_le, unsigned_div_rem, assert_nn
+from starkware.cairo.common.math import assert_not_equal, assert_nn_le, unsigned_div_rem, assert_nn, assert_not_zero, assert_lt, assert_le
 from starkware.cairo.common.math_cmp import is_not_zero, is_le, is_nn
 from starkware.cairo.common.pow import pow
 from starkware.cairo.common.default_dict import default_dict_new, default_dict_finalize
@@ -26,7 +28,8 @@ from starkware.starknet.common.syscalls import (
     get_block_number,
     get_caller_address,
     get_block_timestamp,
-    get_tx_info
+    get_tx_info,
+    get_contract_address
 )
 
 from contracts.utils.Bytes import (
@@ -86,9 +89,11 @@ from contracts.utils.Config import (
     COMMIT_TIMESTAMP_NOT_OLDER,
     COMMIT_TIMESTAMP_APPROXIMATION_DELTA,
     ENABLE_COMMIT_COMPRESSED_BLOCK,
+    CHAIN_ID,
     MIN_CHAIN_ID,
     MAX_CHAIN_ID,
     ALL_CHAINS,
+    CHAIN_INDEX,
     CHUNK_BYTES,
     DEPOSIT_BYTES,
     FULL_EXIT_BYTES,
@@ -104,13 +109,13 @@ from contracts.utils.Config import (
 
 from contracts.utils.Storage import (
     get_totalBlocksExecuted,
+    set_totalBlocksExecuted,
     increase_totalBlocksExecuted,
     get_exodusMode,
     set_exodusMode,
     get_verifier_contract_address,
     set_verifier_contract_address,
     set_periphery_contract_address,
-    set_network_governor_address,
     RegisteredToken,
     get_token_id,
     set_token_id,
@@ -137,7 +142,6 @@ from contracts.utils.Storage import (
     get_chain_id,
     get_firstPriorityRequestId,
     increase_firstPriorityRequestId,
-    set_priority_request,
     only_delegate_call,
     StoredBlockInfo,
     hashStoredBlockInfo,
@@ -148,7 +152,7 @@ from contracts.utils.Storage import (
     get_synchronizedChains,
     set_synchronizedChains,
     get_pendingBalances,
-    increase_pendingBalances,
+    set_pendingBalances,
     active,
     not_active,
     get_performedExodus,
@@ -195,21 +199,6 @@ from contracts.utils.Events import (
 
 from contracts.utils.IVerifier import IVerifier
 
-from contracts.utils.ReentrancyGuard import (
-    reentrancy_guard_init,
-    reentrancy_guard_lock,
-    reentrancy_guard_unlock
-)
-
-#
-# Storage section.
-#
-
-# Zklink contract initialized was 1
-@storage_var
-func was_initialized() -> (res : felt):
-end
-
 #
 # Struct section
 #
@@ -243,11 +232,13 @@ func parse_onchain_operation_data{range_check_ptr}(
     index : felt,
     onchain_operations : OnchainOperationData*
 ) -> (new_offset):
+    alloc_locals
     if index == -1:
         return (_offset)
+    end
     let (offset) = parse_onchain_operation_data(bytes, _offset, index - 1, onchain_operations)
-    let (offset, sub_size) = read_felt(bytes, offset, 4)
     let (offset, public_data_offset) = read_felt(bytes, offset, 4)
+    let (offset, local sub_size) = read_felt(bytes, offset, 4)
     let (offset, eth_witness) = read_bytes(bytes, offset, sub_size)
     assert onchain_operations[index] = OnchainOperationData(
         public_data_offset=public_data_offset,
@@ -287,14 +278,15 @@ end
 func parse_commit_block_info{
     range_check_ptr
 }(bytes : Bytes, _offset : felt) -> (new_offset : felt, res : CommitBlockInfo):
-    let (offset, new_state_hash : Uint256) = read_uint256(bytes, _offset)
-    let (offset, timestamp : Uint256) = read_uint256(bytes, offset)
-    let (offset, block_number) = read_felt(bytes, offset, 4)
-    let (offset, fee_account) = read_felt(bytes, offset, 4)
-    let (offset, pub_data_size) = read_felt(bytes, offset, 4)
-    let (offset, public_data : Bytes) = read_bytes(bytes, offset, pub_data_size)
-    let (offset, onchain_operations_size) = read_felt(bytes, offset, 4)
-    let (offset, onchain_operations : OnchainOperationData*) = parse_onchain_operations_data(bytes, offset, onchain_operations_size)
+    alloc_locals
+    let (offset, local new_state_hash : Uint256) = read_uint256(bytes, _offset)
+    let (offset, local timestamp : Uint256) = read_uint256(bytes, offset)
+    let (offset, local block_number) = read_felt(bytes, offset, 4)
+    let (offset, local fee_account) = read_felt(bytes, offset, 4)
+    let (offset, local pub_data_size) = read_felt(bytes, offset, 4)
+    let (offset, local public_data : Bytes) = read_bytes(bytes, offset, pub_data_size)
+    let (offset, local onchain_operations_size) = read_felt(bytes, offset, 4)
+    let (offset, local onchain_operations : OnchainOperationData*) = parse_onchain_operations_data(bytes, offset, onchain_operations_size)
 
     return (offset, CommitBlockInfo(
         new_state_hash=new_state_hash,
@@ -314,18 +306,32 @@ struct CompressedBlockExtraInfo:
     member onchain_operation_pubdata_hashs : Uint256*       # onchain operation pubdata hash of the all other chains
 end
 
+func CompressedBlockExtraInfo_new() -> (res : CompressedBlockExtraInfo):
+    alloc_locals
+    let (onchain_operation_pubdata_hashs : Uint256*) = alloc()
+    return (
+        CompressedBlockExtraInfo(
+            public_data_hash=Uint256(0, 0),
+            offset_commitment_hash=Uint256(0, 0),
+            onchain_operation_pubdata_hash_len=0,
+            onchain_operation_pubdata_hashs=onchain_operation_pubdata_hashs,
+        )
+    )
+end
+
 func parse_CompressedBlockExtraInfo{
     range_check_ptr
 }(bytes : Bytes, _offset : felt) -> (new_offset : felt, res : CompressedBlockExtraInfo):
+    alloc_locals
     let (offset, public_data_hash : Uint256) = read_uint256(bytes, _offset)
     let (offset, offset_commitment_hash : Uint256) = read_uint256(bytes, offset)
-    let (offset, onchain_operations_size) = read_felt(bytes, offset, 4)
-    let (offset, onchain_operations : OnchainOperationData*) = parse_onchain_operations_data(bytes, offset, onchain_operations_size)
+    let (offset, onchain_operation_pubdata_hash_len) = read_felt(bytes, offset, 4)
+    let (offset, onchain_operation_pubdata_hashs : Uint256*) = read_uint256_array(bytes, offset, onchain_operation_pubdata_hash_len)
 
     return (offset, CompressedBlockExtraInfo(
         public_data_hash=public_data_hash,
         offset_commitment_hash=offset_commitment_hash,
-        onchain_operations_size=onchain_operations_size,
+        onchain_operation_pubdata_hash_len=onchain_operation_pubdata_hash_len,
         onchain_operation_pubdata_hashs=onchain_operation_pubdata_hashs
     ))
 end
@@ -391,11 +397,12 @@ func is_ready_for_upgrade{
     pedersen_ptr : HashBuiltin*,
     range_check_ptr
 }() -> (res : felt):
-    let (exodus_mode_value) = get_exodus_mode()
+    let (exodus_mode_value) = get_exodusMode()
     if exodus_mode_value == 0:
         return (1)
     else:
         return (0)
+    end
 end
 
 # ZkLink contract initialization.
@@ -404,41 +411,53 @@ end
 func initialize{
     syscall_ptr : felt*,
     pedersen_ptr : HashBuiltin*,
+    bitwise_ptr : BitwiseBuiltin*,
     range_check_ptr
 }(
-    vierfier_address : felt,
-    periphery_address : felt,
-    network_governor_address : felt,
-    genesis_state_hash
+    _verifierAddress : felt,
+    _networkGovernor : felt,
+    _blockNumber : felt,
+    _timestamp : Uint256,
+    _stateHash : Uint256,
+    _commitment : Uint256,
+    _syncHash : Uint256
 ):
     # Check if Zklink contract was already initialized
-    let (was_initialized_read) = was_initialized.read()
-    assert was_initialized_read = 0
+    let (initialized) = Initializable.initialized()
+    assert initialized = 0
 
     only_delegate_call()
-    reentrancy_guard_init()
-    
-    set_verifier_contract_address(vierfier_address)
-    set_periphery_contract_address(periphery_address)
-    set_network_governor_address(network_governor_address)
+
+    with_attr error_message("i0"):
+        assert_not_zero(_verifierAddress)
+    end
+    with_attr error_message("i1"):
+        assert_not_zero(_networkGovernor)
+    end
+    set_verifier_contract_address(_verifierAddress)
+    set_network_governor_address(_networkGovernor)
 
     # We need initial state hash because it is used in the commitment of the next block
-    let stored_block_zero = StoredBlockInfo(
-        block_number=0,
+    let storedBlockZero = StoredBlockInfo(
+        block_number=_blockNumber,
         priority_operations=0,
-        pending_onchain_operations_hash=EMPTY_STRING_KECCAK,
-        timestamp=0,
-        state_hash=genesis_state_hash,
-        commitment=0,
-        sync_hash=EMPTY_STRING_KECCAK
+        pending_onchain_operations_hash=Uint256(EMPTY_STRING_KECCAK_LOW, EMPTY_STRING_KECCAK_HIGH),
+        timestamp=Uint256(0, 0),
+        state_hash=_stateHash,
+        commitment=_commitment,
+        sync_hash=_syncHash
     )
 
-    let (n_elements : felt, elements : felt*) = convert_stored_block_info_to_array(stored_block_zero)
-    let (hash : Uint256) = hash_array_to_uint256(n_elements, elements)
-    store_block_hash(0, hash)
+    let (hash : Uint256) = hashStoredBlockInfo(storedBlockZero)
+    set_storedBlockHashes(0, hash)
+
+    set_totalBlocksExecuted(_blockNumber)
+    set_totalBlocksSynchronized(_blockNumber)
+    set_totalBlocksProven(_blockNumber)
+    set_totalBlocksCommitted(_blockNumber)
 
     # Mark that Zklink contract was initialized
-    was_initialized.write(1)
+    Initializable.initialize()
 
     return ()
 end
@@ -452,6 +471,7 @@ func upgrade{
 }(periphery_address : felt):
     only_delegate_call()
     set_periphery_contract_address(periphery_address)
+    return ()
 end
 
 #
@@ -461,11 +481,13 @@ end
 # Will run when no functions matches call data
 @external
 func fallback():
+    return ()
 end
 
 # Same as fallback but called when calldata is empty
 @external
 func receive():
+    return ()
 end
 
 #
@@ -484,10 +506,9 @@ func activateExodusMode{
 }():
     alloc_locals
     # Lock with reentrancy_guard
-    reentrancy_guard_lock()
+    ReentrancyGuard._start()
     # check active
     active()
-
     let (local block_number) = get_block_number()
     let (firstPriorityRequestId) = get_firstPriorityRequestId()
     let (local priorityRequest : PriorityOperation) = get_priorityRequests(firstPriorityRequestId)
@@ -495,10 +516,17 @@ func activateExodusMode{
     let (trigger2) = is_not_zero(priorityRequest.expirationBlock)
     if trigger1 + trigger2 == 2:
         set_exodusMode(1)
-
+        tempvar syscall_ptr = syscall_ptr
+        tempvar pedersen_ptr = pedersen_ptr
+        tempvar range_check_ptr = range_check_ptr
+    else:
+        tempvar syscall_ptr = syscall_ptr
+        tempvar pedersen_ptr = pedersen_ptr
+        tempvar range_check_ptr = range_check_ptr
     end
+
     # Unlock
-    reentrancy_guard_unlock()
+    ReentrancyGuard._end()
     return ()
 end
 
@@ -521,15 +549,15 @@ func performExodus{
   proof_size : felt, proof_data_len : felt, proof_data : felt*):
     alloc_locals
     # Lock with reentrancy_guard
-    reentrancy_guard_lock()
+    ReentrancyGuard._start()
     # not active
     not_active()
 
     # parse calldata
-    tempvar bytes = Bytes(
+    local bytes : Bytes = Bytes(
         _start=0,
         bytes_per_felt=FELT_MAX_BYTES,
-        size=size,
+        size=data_size,
         data_length=data_len,
         data=data
     )
@@ -559,8 +587,8 @@ func performExodus{
     with_attr error_message("y2"):
         let (address) = get_verifier_contract_address()
         let (proofCorrect) = IVerifier.verifyExitProof(
-            contract_address=address
-            _rootHash=_storedBlockInfo.stateHash,
+            contract_address=address,
+            _rootHash=_storedBlockInfo.state_hash,
             _chainId=CHAIN_ID,
             _accountId=_accountId,
             _subAccountId=_subAccountId,
@@ -580,7 +608,7 @@ func performExodus{
     increaseBalanceToWithdraw((_owner, _tokenId), _amount)
     WithdrawalPending.emit(_tokenId, _owner, _amount)
     # Unlock
-    reentrancy_guard_unlock()
+    ReentrancyGuard._end()
     return ()
 end
 
@@ -596,7 +624,7 @@ func cancelOutstandingDepositForExodusMode{
 }(size : felt, data_len : felt, data : felt*):
     alloc_locals
     # Lock with reentrancy_guard
-    reentrancy_guard_lock()
+    ReentrancyGuard._start()
     # not active
     not_active()
 
@@ -604,7 +632,7 @@ func cancelOutstandingDepositForExodusMode{
     let (local id) = get_firstPriorityRequestId()
     let (pr : PriorityOperation) = get_priorityRequests(id)
     if pr.opType == OpType.Deposit:
-        tempvar bytes = Bytes(
+        local bytes : Bytes = Bytes(
             _start=0,
             bytes_per_felt=FELT_MAX_BYTES,
             size=size,
@@ -618,13 +646,22 @@ func cancelOutstandingDepositForExodusMode{
 
         let (op : DepositOperation) = read_deposit_pubdata(bytes)
         increaseBalanceToWithdraw((op.owner, op.token_id), op.amount)
+        tempvar syscall_ptr = syscall_ptr
+        tempvar pedersen_ptr = pedersen_ptr
+        tempvar bitwise_ptr = bitwise_ptr
+        tempvar range_check_ptr = range_check_ptr
+    else:
+        tempvar syscall_ptr = syscall_ptr
+        tempvar pedersen_ptr = pedersen_ptr
+        tempvar bitwise_ptr = bitwise_ptr
+        tempvar range_check_ptr = range_check_ptr
     end
 
     delete_priorityRequests(id)
     increase_firstPriorityRequestId(1)
     sub_totalOpenPriorityRequests(1)
     # Unlock
-    reentrancy_guard_unlock()
+    ReentrancyGuard._end()
     return ()
 end
 
@@ -643,59 +680,78 @@ func setAuthPubkeyHash{
     range_check_ptr
 }(_pubkeyHash : felt, _nonce : felt):
     alloc_locals
+    # Lock with reentrancy_guard
+    ReentrancyGuard._start()
+    # not active
+    active()
+
     # PubKeyHash should be 20 bytes.
     # TODO: check _pubkeyHash valid
     let (local sender) = get_caller_address()
     let (hash) = get_authFacts((sender, _nonce))
-    let (is_zero) = uint256(hash, Uint256(0, 0))
+    let (is_zero) = uint256_eq(hash, Uint256(0, 0))
     if is_zero == 1:
         # TODO: keccak
-        let (h : Uint256) = keccak(&_pubkeyHash, 20)
+        let h = Uint256(0, 0)
         set_authFacts((sender, _nonce), h)
         FactAuth.emit(sender, _nonce, _pubkeyHash)
+        tempvar syscall_ptr = syscall_ptr
+        tempvar pedersen_ptr = pedersen_ptr
+        tempvar range_check_ptr = range_check_ptr
     else:
         let (local currentResetTimer : Uint256) = get_authFactsResetTimer((sender, _nonce))
         # TODO: on starknet, timestamp should use felt
         let (block_timestamp) = get_block_timestamp()
         let timestamp = Uint256(block_timestamp, 0)
-        let (eq) = uint256(currentResetTimer, Uint256(0, 0))
+        let (eq) = uint256_eq(currentResetTimer, Uint256(0, 0))
         if eq == 1:
             set_authFactsResetTimer((sender, _nonce), timestamp)
+            tempvar syscall_ptr = syscall_ptr
+            tempvar pedersen_ptr = pedersen_ptr
+            tempvar range_check_ptr = range_check_ptr
         else:
             with_attr error_message("B1"):
                 let (time : Uint256) = uint256_sub(timestamp, currentResetTimer)
-                let (res) = uint256_le(AUTH_FACT_RESET_TIMELOCK, time)
+                let (res) = uint256_le(Uint256(AUTH_FACT_RESET_TIMELOCK, 0), time)
                 assert res = 1
             end
             set_authFactsResetTimer((sender, _nonce), Uint256(0, 0))
-            let (h : Uint256) = keccak(&_pubkeyHash, 20)
+            # # TODO: keccak
+            let h = Uint256(0, 0)
             set_authFacts((sender, _nonce), h)
             FactAuth.emit(sender, _nonce, _pubkeyHash)
+            tempvar syscall_ptr = syscall_ptr
+            tempvar pedersen_ptr = pedersen_ptr
+            tempvar range_check_ptr = range_check_ptr
         end
     end
+    # Unlock
+    ReentrancyGuard._end()
+    return ()
 end
 
 # Deposit ETH to Layer 2 - transfer ether from user into contract, validate it, register deposit.
 @external
-func deposit_ETH{
+func depositETH{
     syscall_ptr : felt*,
     pedersen_ptr : HashBuiltin*,
     bitwise_ptr : BitwiseBuiltin*,
     range_check_ptr
-}(zklink_address : felt, sub_account_id : felt, amount : felt):
+}(_zkLinkAddress : felt, _subAccountId : felt, _amount : felt):
     # Lock with reentrancy_guard
-    reentrancy_guard_lock()
+    ReentrancyGuard._start()
     
     # deposit
     deposit(
-        token_address=ETH_ADDRESS,
-        amount=amount,
-        zklink_address=zklink_address,
-        sub_account_id=sub_account_id
+        _tokenAddress=ETH_ADDRESS,
+        _amount=_amount,
+        _zkLinkAddress=_zkLinkAddress,
+        _subAccountId=_subAccountId,
+        _mapping=0
     )
 
     # Unlock
-    reentrancy_guard_unlock()
+    ReentrancyGuard._end()
     return ()
 end
 
@@ -703,33 +759,33 @@ end
 # # it MUST be ok to call other external functions within from this function
 # # when the token(eg. erc777,erc1155) is not a pure erc20 token
 @external
-func deposit_ERC20{
+func depositERC20{
     syscall_ptr : felt*,
     pedersen_ptr : HashBuiltin*,
     bitwise_ptr : BitwiseBuiltin*,
     range_check_ptr
-}(token_address : felt, amount : felt, zklink_address : felt, sub_account_id : felt):
+}(_tokenAddress : felt, _amount : felt, _zkLinkAddress : felt, _subAccountId : felt, _mapping : felt):
     # Lock with reentrancy_guard
-    reentrancy_guard_lock()
+    ReentrancyGuard._start()
     # support non-standard tokens
     let (current_contract_address) = get_contract_address()
     let (sender) = get_caller_address()
     let (balance_before : Uint256) = IERC20.balanceOf(
-        contract_address=token_address,
+        contract_address=_tokenAddress,
         account=current_contract_address
     )
 
     # NOTE, if the token is not a pure erc20 token, it could do anything within the transferFrom
-    let (amount_uint256 : Uint256) = felt_to_uint256(amount)
+    let (amount_uint256 : Uint256) = felt_to_uint256(_amount)
     IERC20.transferFrom(
-        contract_address=token_address,
+        contract_address=_tokenAddress,
         sender=sender,
         recipient=current_contract_address,
         amount=amount_uint256
     )
 
     let (balance_after : Uint256) = IERC20.balanceOf(
-        contract_address=token_address,
+        contract_address=_tokenAddress,
         account=current_contract_address
     )
     let (deposit_amount_uint256 : Uint256) = uint256_sub(balance_after, balance_before)
@@ -737,14 +793,15 @@ func deposit_ERC20{
     
     # deposit
     deposit(
-        token_address=token_address,
-        amount=deposit_amount,
-        zklink_address=zklink_address,
-        sub_account_id=sub_account_id
+        _tokenAddress=_tokenAddress,
+        _amount=deposit_amount,
+        _zkLinkAddress=_zkLinkAddress,
+        _subAccountId=_subAccountId,
+        _mapping=_mapping
     )
 
     # Unlock
-    reentrancy_guard_unlock()
+    ReentrancyGuard._end()
     return ()
 end
 
@@ -757,7 +814,7 @@ func request_full_exit{
     range_check_ptr
 }(account_id : felt, sub_account_id : felt, token_id : felt):
     # Lock with reentrancy_guard
-    reentrancy_guard_lock()
+    ReentrancyGuard._start()
 
     # Checks
     # account_id and sub_account_id MUST be valid
@@ -773,7 +830,7 @@ func request_full_exit{
         assert rt.registered = 1
     end
     # to prevent ddos
-    let (requests) = get_total_open_priority_requests()
+    let (requests) = get_totalOpenPriorityRequests()
     with_attr error_message("a3"):
         assert_nn_le(requests, MAX_PRIORITY_REQUESTS - 1)
     end
@@ -791,9 +848,9 @@ func request_full_exit{
         amount=0    # unknown at this point
     )
     let (num, pub_data) = convert_fullexit_operation_to_array(op)
-    add_priority_request(op_type=OPERATIONS_OPTYPE_FULL_EXIT, pub_data=pub_data, n_elements=num)
+    add_priority_request(op_type=OpType.FullExit, pub_data=pub_data, n_elements=num)
     # Unlock
-    reentrancy_guard_unlock()
+    ReentrancyGuard._end()
     return ()
 end
 
@@ -807,8 +864,9 @@ func withdrawPendingBalance{
     bitwise_ptr : BitwiseBuiltin*,
     range_check_ptr
 }(owner : felt, token_id : felt, _amount : felt):
+    alloc_locals
     # Lock with reentrancy_guard
-    reentrancy_guard_lock()
+    ReentrancyGuard._start()
     # Checks
     # token MUST be registered to ZkLink
     let (rt : RegisteredToken) = get_token(token_id)
@@ -817,33 +875,32 @@ func withdrawPendingBalance{
     end
 
     # Set the available amount to withdraw
-    let (balance) = get_pendingBalances((owner, token_id))
-    let (amount) = min_felt(balance, _amount)
+    let (local balance) = get_pendingBalances((owner, token_id))
+    let (local amount) = min_felt(balance, _amount)
     with_attr error_message("b1"):
-        assert_nn(amount)
+        assert_not_zero(amount)
     end
 
     # Effects
-    increase_pendingBalances((owner, token_id), balance - amount)    # amount <= balance
+    set_pendingBalances((owner, token_id), balance - amount)    # amount <= balance
 
     # Interactions
-    let token_address = rt.tokenAddress
-    let (amount : Uint256) = felt_to_uint256(_amount)
-    let (max_amount : Uint256) = felt_to_uint256(balance)
-    if token_address == ETH_ADDRESS:
-        # TODO
-        # send (amount) eth to owner
+    let (amount1) = transferERC20(rt.tokenAddress, owner, amount, balance, rt.standard)
+    if  amount == amount1:
+        tempvar syscall_ptr = syscall_ptr
+        tempvar pedersen_ptr = pedersen_ptr
+        tempvar range_check_ptr = range_check_ptr
     else:
-        let (amount_1 : Uint256) = transfer_ERC20(token_address, owner, amount, max_amount, rt.standard)
-        if uint256_eq(amount, amount1) == 0:
-            let pending_balance = uint256_to_felt(max_amount - amount1)
-            increase_pendingBalances((owner, token_id), pending_balance)
-            let amount2 = uint256_to_felt(amount1)
-            Withdrawal.emit(token_id=token_id, amount2)
-        end
+        set_pendingBalances((owner, token_id), balance - amount1)
+        tempvar syscall_ptr = syscall_ptr
+        tempvar pedersen_ptr = pedersen_ptr
+        tempvar range_check_ptr = range_check_ptr
     end
+
+    Withdrawal.emit(token_id=token_id, amount=amount1)
+
     # Unlock
-    reentrancy_guard_unlock()
+    ReentrancyGuard._end()
     return ()
 end
 
@@ -851,12 +908,13 @@ end
 # NOTE: will revert if transfer call fails or rollup balance difference (before and after transfer) is bigger than _maxAmount
 # This function is used to allow tokens to spend zkLink contract balance up to amount that is requested
 @external
-func transfer_ERC20{
+func transferERC20{
     syscall_ptr : felt*,
     pedersen_ptr : HashBuiltin*,
     bitwise_ptr : BitwiseBuiltin*,
     range_check_ptr
-}(token_address : felt, to : felt, _amount : Uint256, max_amount : felt, is_standard : felt) -> (amount : Uint256):
+}(token_address : felt, to : felt, _amount : felt, max_amount : felt, is_standard : felt) -> (amount : felt):
+    alloc_locals
     # can be called only from this contract as one "external" call 
     # (to revert all this function state changes if it is needed)
     let (sender) = get_caller_address()
@@ -867,22 +925,23 @@ func transfer_ERC20{
 
     # most tokens are standard, fewer query token balance can save gas
     if is_standard == 1:
-        IERC20.transfer(recipient=to, amount=_amount)
+        IERC20.transfer(contract_address=token_address, recipient=to, amount=Uint256(_amount, 0))
         return (_amount)
     else:
-        let (balance_before : Uint256) = IERC20.balanceOf(current_contract_address)
-        IERC20.transfer(recipient=to, amount=_amount)
-        let (balance_after : Uint256) = IERC20.balanceOf(current_contract_address)
-        let (balance_diff : Uint256) = uint256_sub(balance_before, balance_after)
+        let (balance_before : Uint256) = IERC20.balanceOf(contract_address=token_address, account=current_contract_address)
+        IERC20.transfer(contract_address=token_address, recipient=to, amount=Uint256(_amount, 0))
+        let (balance_after : Uint256) = IERC20.balanceOf(contract_address=token_address, account=current_contract_address)
+        let (local balance_diff : Uint256) = uint256_sub(balance_before, balance_after)
         # transfer is considered successful only if the balance of the contract decreased after transfer
         with_attr error_message("n1"):
-            assert_nn(balance_diff)
+            let (lt) = uint256_lt(Uint256(0, 0), balance_diff)
+            assert lt = 1
         end
         # rollup balance difference (before and after transfer) is bigger than `_maxAmount`
         with_attr error_message("n2"):
-            assert_nn_le(balance_diff, max_amount)
+            let (le) = uint256_le(balance_diff, Uint256(max_amount, 0))
         end
-        return (balance_diff)
+        return (balance_diff.low)
     end
 end
 
@@ -894,13 +953,14 @@ end
 # 1. Checks onchain operations of all chains, timestamp.
 # 2. Store block commitments, sync hash
 @external
-func commit_block{
+func commitBlock{
     syscall_ptr : felt*,
     pedersen_ptr : HashBuiltin*,
     bitwise_ptr : BitwiseBuiltin*,
     range_check_ptr
 }(size : felt, data_len : felt, data : felt*):
-    tempvar bytes = Bytes(
+    alloc_locals
+    local bytes : Bytes = Bytes(
         _start=0,
         bytes_per_felt=FELT_MAX_BYTES,
         size=size,
@@ -909,22 +969,24 @@ func commit_block{
     )
     let (offset, _lastCommittedBlockData : StoredBlockInfo) = parse_stored_block_info(bytes, 0)
     let (_, _newBlocksData : CommitBlockInfo) = parse_commit_block_info(bytes, offset)
-    let (_newBlockExtraData : CompressedBlockExtraInfo)= CommitBlockInfo_new()
+    let (_newBlockExtraData : CompressedBlockExtraInfo)= CompressedBlockExtraInfo_new()
 
-    _commit_block(_lastCommittedBlockData, new_block_data, false, _newBlockExtraData)
+    _commit_block(_lastCommittedBlockData, _newBlocksData, 0, _newBlockExtraData)
+    return ()
 end
 
 # Commit compressed block
 # 1. Checks onchain operations of current chain, timestamp.
 # 2. Store block commitments, sync hash
 @external
-func commit_compressed_block{
+func commitCompressedBlock{
     syscall_ptr : felt*,
     pedersen_ptr : HashBuiltin*,
     bitwise_ptr : BitwiseBuiltin*,
     range_check_ptr
 }(size : felt, data_len : felt, data : felt*):
-    tempvar bytes = Bytes(
+    alloc_locals
+    local bytes : Bytes = Bytes(
         _start=0,
         bytes_per_felt=FELT_MAX_BYTES,
         size=size,
@@ -935,7 +997,8 @@ func commit_compressed_block{
     let (offset, _newBlocksData : CommitBlockInfo) = parse_commit_block_info(bytes, offset)
     let (_, _newBlockExtraData : CompressedBlockExtraInfo) = parse_CompressedBlockExtraInfo(bytes, offset)
 
-    _commit_block(_lastCommittedBlockData, new_block_data, true, _newBlockExtraData)
+    _commit_block(_lastCommittedBlockData, _newBlocksData, 1, _newBlockExtraData)
+    return ()
 end
 
 # Recursive proof input data (individual commitments are constructed onchain)
@@ -956,6 +1019,7 @@ end
 func parse_ProofInput{
     range_check_ptr
 }(bytes : Bytes, _offset : felt) -> (new_offset : felt, res : ProofInput):
+    alloc_locals
     let (offset, local recursiveInput_len) = read_felt(bytes, _offset, 4)
     let (offset, recursiveInput : Uint256*) = read_uint256_array(bytes, offset, recursiveInput_len)
     let (offset, local proof_len) = read_felt(bytes, offset, 4)
@@ -995,14 +1059,14 @@ func proveBlocks{
 ):
     alloc_locals
     # Lock with reentrancy_guard
-    reentrancy_guard_lock()
+    ReentrancyGuard._start()
 
-    tempvar bytes = Bytes(
+    local bytes : Bytes = Bytes(
         _start=0,
         bytes_per_felt=FELT_MAX_BYTES,
-        size=size,
-        data_length=data_len,
-        data=data
+        size=proof_size,
+        data_length=proof_data_len,
+        data=proof_data
     )
     let (_, local _proof : ProofInput) = parse_ProofInput(bytes, 0)
     # Checks
@@ -1028,7 +1092,7 @@ func proveBlocks{
         assert success = 1
     end
     # Unlock
-    reentrancy_guard_unlock()
+    ReentrancyGuard._end()
     return ()
 end
 
@@ -1038,6 +1102,7 @@ func _proveBlocks{
     bitwise_ptr : BitwiseBuiltin*,
     range_check_ptr
 }(_committedBlocks : StoredBlockInfo*, _proof : ProofInput, i) -> (newTotalBlocksProven : felt):
+    alloc_locals
     if i == -1:
         let (currentTotalBlocksProven) = get_totalBlocksProven()
         return (currentTotalBlocksProven)
@@ -1051,7 +1116,7 @@ func _proveBlocks{
     end
     with_attr error_message("x1"):
         let (and1 : Uint256) = uint256_and(_proof.commitments[i], Uint256(INPUT_MASK_LOW, INPUT_MASK_HIGH))
-        let (and2 : Uint256) = uint256_add(_committedBlocks[i].commitment, Uint256(INPUT_MASK_LOW, INPUT_MASK_HIGH))
+        let (and2 : Uint256) = uint256_and(_committedBlocks[i].commitment, Uint256(INPUT_MASK_LOW, INPUT_MASK_HIGH))
         let (eq) = uint256_eq(and1, and2)
         assert eq = 1
     end
@@ -1070,7 +1135,7 @@ func revertBlocks{
 }(_blocksToRevert_len : felt, _blocksToRevert : StoredBlockInfo*):
     alloc_locals
     # Lock with reentrancy_guard
-    reentrancy_guard_lock()
+    ReentrancyGuard._start()
     # onlyValidator
     only_validator()
 
@@ -1079,7 +1144,7 @@ func revertBlocks{
     let (blocksToRevert) = min_felt(_blocksToRevert_len, blocksCommitted - totalBlocksExecuted)
 
     let (local blocksCommitted, local revertedPriorityRequests) = _revertBlocks(
-        _blocksToRevert, _blocksToRevert - 1, blocksCommitted, 0)
+        _blocksToRevert, _blocksToRevert_len - 1, blocksCommitted, 0)
     
     set_totalBlocksCommitted(blocksCommitted)
     sub_totalCommittedPriorityRequests(revertedPriorityRequests)
@@ -1089,6 +1154,13 @@ func revertBlocks{
     let (small) = is_le(totalBlocksCommitted, totalBlocksProven - 1)
     if small == 1:
         set_totalBlocksProven(totalBlocksCommitted)
+        tempvar syscall_ptr = syscall_ptr
+        tempvar pedersen_ptr = pedersen_ptr
+        tempvar range_check_ptr = range_check_ptr
+    else:
+        tempvar syscall_ptr = syscall_ptr
+        tempvar pedersen_ptr = pedersen_ptr
+        tempvar range_check_ptr = range_check_ptr
     end
 
     let (local totalBlocksProven) = get_totalBlocksProven()
@@ -1096,12 +1168,19 @@ func revertBlocks{
         let (small) = is_le(totalBlocksProven, totalBlocksSynchronized - 1)
     if small == 1:
         set_totalBlocksSynchronized(totalBlocksProven)
+        tempvar syscall_ptr = syscall_ptr
+        tempvar pedersen_ptr = pedersen_ptr
+        tempvar range_check_ptr = range_check_ptr
+    else:
+        tempvar syscall_ptr = syscall_ptr
+        tempvar pedersen_ptr = pedersen_ptr
+        tempvar range_check_ptr = range_check_ptr
     end
 
     BlocksRevert.emit(totalBlocksExecuted, blocksCommitted)
 
     # Unlock
-    reentrancy_guard_unlock()
+    ReentrancyGuard._end()
     return ()
 end
 
@@ -1116,11 +1195,12 @@ func _revertBlocks{
     _blocksCommitted : felt,
     _revertedPriorityRequests : felt
 ) -> (blocksCommitted : felt, revertedPriorityRequests : felt):
+    alloc_locals
     if i == -1:
         return(_blocksCommitted, _revertedPriorityRequests)
     end
 
-    let (before_blocksCommitted, before_revertedPriorityRequests) = _revertBlocks(
+    let (local before_blocksCommitted, before_revertedPriorityRequests) = _revertBlocks(
         _blocksToRevert, i - 1, _blocksCommitted, _revertedPriorityRequests)
     
     with_attr error_message("c"):
@@ -1148,13 +1228,13 @@ func executeBlock{
 }(size : felt, data_len : felt, data : felt*):
     alloc_locals
     # Lock with reentrancy_guard
-    reentrancy_guard_lock()
+    ReentrancyGuard._start()
     # active and onlyValidator
     active()
     only_validator()
 
     # parse calldata
-    tempvar bytes = Bytes(
+    local bytes : Bytes = Bytes(
         _start=0,
         bytes_per_felt=FELT_MAX_BYTES,
         size=size,
@@ -1176,9 +1256,9 @@ func executeBlock{
         assert_nn_le(totalBlocksExecuted, totalBlocksSynchronized)
     end
 
-    BlockExecuted.emit(_blockData.storedBlock.blockNumber)
+    BlockExecuted.emit(_blockData.storedBlock.block_number)
     # Unlock
-    reentrancy_guard_unlock()
+    ReentrancyGuard._end()
     return ()
 end
 
@@ -1205,6 +1285,7 @@ func changeGovernor{
         set_network_governor_address(_newGovernor)
         NewGovernor.emit(_newGovernor)
     end
+    return ()
 end
 
 # Add token to the list of networks tokens
@@ -1277,7 +1358,7 @@ func addTokens{
     _tokenAddressList_len : felt,
     _tokenAddressList : felt*,
     _standardList_len : felt,
-    _standardList : felt,
+    _standardList : felt*,
     _mappingTokenList_len : felt,
     _mappingTokenList : felt*
 ):
@@ -1300,7 +1381,7 @@ func _addTokens{
 }(
     _tokenIdList : felt*,
     _tokenAddressList : felt*,
-    _standardList : felt,
+    _standardList : felt*,
     _mappingTokenList : felt*,
     i : felt
 ):
@@ -1335,7 +1416,7 @@ func setTokenPaused{
         return ()
     else:
         let new_rt = RegisteredToken(
-            registered=rt.registered
+            registered=rt.registered,
             paused=_tokenPaused,
             tokenAddress=rt.tokenAddress,
             standard=rt.standard,
@@ -1366,6 +1447,7 @@ func setValidator{
         set_validator(_validator, _active)
         ValidatorStatusUpdate.emit(_validator, _active)
     end
+    return ()
 end
 
 # Add a new bridge
@@ -1429,6 +1511,7 @@ func updateBridge{
     )
     update_bridge(index, new_info)
     UpdateBridge.emit(index, enableBridgeTo, enableBridgeFrom)
+    return ()
 end
 
 @view
@@ -1438,14 +1521,15 @@ func isBridgeToEnabled{
     bitwise_ptr : BitwiseBuiltin*,
     range_check_ptr
 }(bridge : felt) -> (enabled : felt):
+    alloc_locals
     let (index) = get_bridgeIndex(bridge)
     let (info : BridgeInfo) = get_bridge(index)
     if info.bridge == bridge:
-        if info.enableBridgeTo = 1:
+        if info.enableBridgeTo == 1:
             return (1)
-    else:
-        return (0)
+        end
     end
+    return (0)
 end
 
 @view
@@ -1455,14 +1539,15 @@ func isBridgeFromEnabled{
     bitwise_ptr : BitwiseBuiltin*,
     range_check_ptr
 }(bridge : felt) -> (enabled : felt):
+    alloc_locals
     let (index) = get_bridgeIndex(bridge)
     let (info : BridgeInfo) = get_bridge(index)
-    if info.bridge = bridge:
-        if info.enableBridgeFrom = 1:
+    if info.bridge == bridge:
+        if info.enableBridgeFrom == 1:
             return (1)
-    else:
-        return (0)
+        end
     end
+    return (0)
 end
 
 #
@@ -1474,30 +1559,27 @@ func deposit{
     pedersen_ptr : HashBuiltin*,
     bitwise_ptr : BitwiseBuiltin*,
     range_check_ptr
-}(token_address : felt, amount : felt, zklink_address : felt, sub_account_id : felt):
+}(_tokenAddress : felt, _amount : felt, _zkLinkAddress : felt, _subAccountId : felt, _mapping : felt):
     alloc_locals
-    # Checks that current state not is exodus mode
-    let (exodus_mode_stat) = get_exodus_mode()
-    with_attr error_message("Z0"):
-        assert_not_equal(exodus_mode_stat, EXODUS_MODE_ON)
-    end
+    active()
 
     # Checks
     # disable deposit to zero address or with zero amount
-    with_attr error_message("Z33"):
-        assert_nn_le(amount, MAX_DEPOSIT_AMOUNT)
+    with_attr error_message("e0"):
+        assert_lt(0, _amount)
+        assert_le(_amount, MAX_DEPOSIT_AMOUNT)
     end
 
-    with_attr error_message("Z34"):
-        assert_not_equal(zklink_address, 0)
+    with_attr error_message("e1"):
+        assert_not_zero(_zkLinkAddress)
     end
 
     # sub account id must be valid
-    with_attr error_message("Z30"):
-        assert_nn_le(sub_account_id, MAX_SUB_ACCOUNT_ID)
+    with_attr error_message("e2"):
+        assert_nn_le(_subAccountId, MAX_SUB_ACCOUNT_ID)
     end
 
-    let (token_id) = get_token_id(token_address)
+    let (token_id) = get_token_id(_tokenAddress)
     let (rt : RegisteredToken) = get_token(token_id)
 
     # token MUST be registered to ZkLink and deposit MUST be enabled
@@ -1508,10 +1590,21 @@ func deposit{
         assert rt.paused = 0
     end
 
+    let targetTokenId = token_id
+    if _mapping == 1:
+        with_attr error_message("e5"):
+            assert_lt(0, rt.mappingTokenId)
+        end
+        targetTokenId = rt.mappingTokenId
+        tempvar range_check_ptr = range_check_ptr
+    else:
+        tempvar range_check_ptr = range_check_ptr
+    end
+
     # To prevent DDOS atack
-    let (requests) = get_total_open_priority_requests()
-    with_attr error_message("e5"):
-        assert_nn_le(requests, MAX_PRIORITY_REQUESTS-1)
+    let (requests) = get_totalOpenPriorityRequests()
+    with_attr error_message("e6"):
+        assert_lt(requests, MAX_PRIORITY_REQUESTS)
     end
 
     # Effects
@@ -1520,13 +1613,14 @@ func deposit{
     let op = DepositOperation(
         chain_id=chain_id,
         account_id=0,
-        sub_account_id=sub_account_id,
+        sub_account_id=_subAccountId,
         token_id=token_id,
-        amount=amount,
-        owner=zklink_address
+        target_token_id=targetTokenId,
+        amount=_amount,
+        owner=_zkLinkAddress
     )
     let (num, pub_data) = convert_deposit_operation_to_array(op)
-    add_priority_request(op_type=OPERATIONS_OPTYPE_DEPOSIT, pub_data=pub_data, n_elements=num)
+    add_priority_request(op_type=OpType.Deposit, pub_data=pub_data, n_elements=num)
 
     return ()
 end
@@ -1540,7 +1634,7 @@ func add_priority_request{
     alloc_locals
     # Expiration block is: current block number + priority expiration delta, overflow is impossible
     let (block_number) = get_block_number()
-    local expirationBlock = block_number + PRIORITY_EXPIRATION
+    tempvar expirationBlock = block_number + PRIORITY_EXPIRATION
 
     # overflow is impossible
     let (first_priority_request_id) = get_firstPriorityRequestId()
@@ -1554,9 +1648,10 @@ func add_priority_request{
         expirationBlock=expirationBlock,
         opType=op_type
     )
-    set_priority_request(next_priority_request_id, op)
+    set_priorityRequests(next_priority_request_id, op)
 
-    let (sender) = get_caller_address() 
+    let (sender) = get_caller_address()
+    let (expiration_block : Uint256) = felt_to_uint256(expirationBlock)
     NewPriorityRequest.emit(
         sender=sender,
         serialId=next_priority_request_id,
@@ -1580,8 +1675,9 @@ func _commit_block{
     compressed : felt,
     _newBlocksExtraData : CompressedBlockExtraInfo
 ):
+    alloc_locals
     # Lock with reentrancy_guard
-    reentrancy_guard_lock()
+    ReentrancyGuard._start()
 
     # active and only validator
     active()
@@ -1591,12 +1687,13 @@ func _commit_block{
     # Check that we commit blocks after last committed block
     with_attr error_message("f1"):
         let (total_blocks_committed) = get_total_blocks_committed()
-        let (old_stored_block_hash : Uint256) = get_storedBlockHashes(total_blocks_committed)
+        let (local old_stored_block_hash : Uint256) = get_storedBlockHashes(total_blocks_committed)
 
         let (n_elements : felt, elements : felt*) = convert_stored_block_info_to_array(_lastCommittedBlockData)
         let (last_committed_block_hash : Uint256) = hash_array_to_uint256(n_elements, elements)
 
-        assert uint256_eq(old_stored_block_hash, last_committed_block_hash) = 1
+        let (eq) =  uint256_eq(old_stored_block_hash, last_committed_block_hash)
+        assert eq = 1
     end
 
     # Effects
@@ -1617,7 +1714,7 @@ func _commit_block{
     BlockCommit.emit(_lastCommittedBlockData.block_number)
 
     # Unlock
-    reentrancy_guard_unlock()
+    ReentrancyGuard._end()
     return ()
 end
 
@@ -1634,6 +1731,7 @@ func commit_one_block{
     _compressed : felt,
     _newBlockExtra : CompressedBlockExtraInfo
 ) -> (stored_new_block : StoredBlockInfo):
+    alloc_locals
     # Checks
     with_attr error_message("g0"):
         assert _newBlock.block_number - _previousBlock.block_number = 1
@@ -1646,13 +1744,17 @@ func commit_one_block{
 
     # Check timestamp of new block
     with_attr error_message("g2"):
-        assert_nn_le(_previousBlock.timestamp, _newBlock.timestamp)
+        let (le) = uint256_le(_previousBlock.timestamp, _newBlock.timestamp)
+        assert le = 1
     end
     # MUST be in a range of [block.timestamp - COMMIT_TIMESTAMP_NOT_OLDER, block.timestamp + COMMIT_TIMESTAMP_APPROXIMATION_DELTA]
-    let (current_block_timestamp) = get_block_timestamp()
+    let (local current_block_timestamp) = get_block_timestamp()
     with_attr error_message("g3"):
-        assert_nn_le(current_block_timestamp - COMMIT_TIMESTAMP_NOT_OLDER, _newBlock.timestamp)
-        assert_nn_le(_newBlock.timestamp, current_block_timestamp + COMMIT_TIMESTAMP_APPROXIMATION_DELTA)
+        let (le) = uint256_le(Uint256(current_block_timestamp - COMMIT_TIMESTAMP_NOT_OLDER, 0), _newBlock.timestamp)
+        assert le = 1
+        let (le) = uint256_le(_newBlock.timestamp, Uint256(current_block_timestamp + COMMIT_TIMESTAMP_APPROXIMATION_DELTA, 0))
+        assert le = 1
+        
     end
 
     # Check onchain operations
@@ -1660,7 +1762,8 @@ func commit_one_block{
         pendingOnchainOpsHash : Uint256,
         priorityReqCommitted,
         onchainOpsOffsetCommitment,
-        onchainOperationPubdataHashs : DictAccess*
+        local onchainOperationPubdataHashs_low : DictAccess*,
+        local onchainOperationPubdataHashs_high : DictAccess*
     ) = collect_onchain_ops(_newBlock)
 
     # Create synchronization hash for cross chain block verify
@@ -1668,10 +1771,16 @@ func commit_one_block{
 
     # Create synchronization hash for cross chain block verify
     if _compressed == 1:
-        create_sync_hashs(onchainOperationPubdataHashs, _newBlockExtra.onchainOperationPubdataHashs, MAX_CHAIN_ID)
+        create_sync_hashs(onchainOperationPubdataHashs_low, onchainOperationPubdataHashs_high,
+            _newBlockExtra.onchain_operation_pubdata_hashs, MAX_CHAIN_ID)
+        tempvar bitwise_ptr = bitwise_ptr
+        tempvar range_check_ptr = range_check_ptr
+    else:
+        tempvar bitwise_ptr = bitwise_ptr
+        tempvar range_check_ptr = range_check_ptr
     end
 
-    let (syncHash : Uint256) = create_sync_hash(commitment, onchainOperationPubdataHashs)
+    let (syncHash : Uint256) = create_sync_hash(commitment, onchainOperationPubdataHashs_low, onchainOperationPubdataHashs_high)
     return (
         StoredBlockInfo(
             block_number=_newBlock.block_number,
@@ -1688,42 +1797,46 @@ end
 func create_sync_hashs{
     range_check_ptr,
     bitwise_ptr : BitwiseBuiltin*
-}(dict : DictAccess*, onchainOperationPubdataHashs : Uint256*, i : felt):
+}(low : DictAccess*, high : DictAccess*, onchainOperationPubdataHashs : Uint256*, i : felt):
+    alloc_locals
     if i == MIN_CHAIN_ID - 1:
         return ()
     end
 
-    create_sync_hashs(dict, onchainOperationPubdataHashs, index - 1)
-    let (not_eq) = is_not_zero(i, CHAIN_ID)
-    if not_eq == 1:
-        dict_update{dict_ptr=dict}(key=i, new_value=onchainOperationPubdataHashs[i])
+    create_sync_hashs(low, high, onchainOperationPubdataHashs, i - 1)
+    if i - CHAIN_ID == 0:
+        dict_write{dict_ptr=low}(key=i, new_value=onchainOperationPubdataHashs[i].low)
+        dict_write{dict_ptr=high}(key=i, new_value=onchainOperationPubdataHashs[i].high)
     end
+    return ()
 end
 
 # Create synchronization hash for cross chain block verify
 func create_sync_hash{
     range_check_ptr, 
     bitwise_ptr : BitwiseBuiltin*
-}(commitment : Uint256, onchainOperationPubdataHashs : DictAccess*) -> (syncHash : Uint256):
-    let (syncHash : Uint256) = _create_sync_hash(commitment, onchainOperationPubdataHashs, MAX_CHAIN_ID)
+}(commitment : Uint256, low : DictAccess*, high :  DictAccess*) -> (syncHash : Uint256):
+    let (syncHash : Uint256) = _create_sync_hash(commitment, low, high, MAX_CHAIN_ID)
     return (syncHash)
 end
 
 func _create_sync_hash{
     range_check_ptr, 
     bitwise_ptr : BitwiseBuiltin*
-}(commitment : Uint256, onchainOperationPubdataHashs : DictAccess*, i : felt) -> (syncHash : Uint256):
+}(commitment : Uint256, low : DictAccess*, high : DictAccess*, i : felt) -> (syncHash : Uint256):
+    alloc_locals
     if i == MIN_CHAIN_ID - 1:
         return (commitment)
     end
 
-    let (before_commitment) = _create_sync_hash(commitment, onchainOperationPubdataHashs, i - 1)
+    let (before_commitment) = _create_sync_hash(commitment, low, high, i - 1)
     let (chainIndex_plus_1) = pow(2, i)
     tempvar chainIndex = chainIndex_plus_1 - 1
-    let chainIndex_and_ALL_CHAINS = bitwise_and(chainIndex, ALL_CHAINS)
+    let (chainIndex_and_ALL_CHAINS) = bitwise_and(chainIndex, ALL_CHAINS)
     if chainIndex_and_ALL_CHAINS == chainIndex:
-        let (hash : Uint256) = dict_read{dict_ptr=onchainOperationPubdataHashs}(key=i)
-        let (syncHash) = concat_two_hash(before_commitment, hash)
+        let (hash_low) = dict_read{dict_ptr=low}(key=i)
+        let (hash_high) = dict_read{dict_ptr=high}(key=i)
+        let (syncHash) = concat_two_hash(before_commitment, Uint256(hash_low, hash_high))
         return (syncHash)
     else:
         return (before_commitment)
@@ -1742,7 +1855,8 @@ func collect_onchain_ops{
     processable_operations_hash : Uint256,
     priority_operations_processed : felt,
     offsets_commitment : felt,
-    onchain_operation_pubdata_hashs : DictAccess*
+    onchain_operation_pubdata_hashs_low : DictAccess*,
+    onchain_operation_pubdata_hashs_high : DictAccess*
 ):
     alloc_locals
     let pub_data = new_block_data.public_data
@@ -1757,7 +1871,8 @@ func collect_onchain_ops{
     let (total_committed_priority_requests) = get_totalCommittedPriorityRequests()
     tempvar uncommitted_priority_requests_offset = first_priority_request_id + total_committed_priority_requests
 
-    let (onchain_operation_pubdata_hashs : DictAccess*) = init_onchain_operation_pubdata_hashs()
+    let (onchain_operation_pubdata_hashs_low : DictAccess*,
+        onchain_operation_pubdata_hashs_high : DictAccess*) = init_onchain_operation_pubdata_hashs()
 
     # loop
     let (
@@ -1770,9 +1885,11 @@ func collect_onchain_ops{
         new_block_data.onchain_operations_size - 1,
         0,
         uncommitted_priority_requests_offset,
-        onchain_operation_pubdata_hashs
+        onchain_operation_pubdata_hashs_low,
+        onchain_operation_pubdata_hashs_high
     )
-    return (processable_operations_hash, priority_operations_processed, offsets_commitmemt, onchain_operation_pubdata_hashs)
+    return (processable_operations_hash, priority_operations_processed,
+        offsets_commitmemt, onchain_operation_pubdata_hashs_low, onchain_operation_pubdata_hashs_high)
 end
 
 func _collect_onchain_ops{
@@ -1786,24 +1903,29 @@ func _collect_onchain_ops{
     index : felt,
     _offsets_commitmemt : felt,
     _uncommitted_priority_requests_offset : felt,
-    onchain_operation_pubdata_hashs : DictAccess*
+    onchain_operation_pubdata_hashs_low : DictAccess*,
+    onchain_operation_pubdata_hashs_high : DictAccess*
 ) -> (
     offsets_commitmemt : felt,
     priority_operations_processed : felt,
     processable_operations_hash : Uint256
 ):
+    alloc_locals
     if index == -1:
         return (_offsets_commitmemt, 0, Uint256(EMPTY_STRING_KECCAK_LOW, EMPTY_STRING_KECCAK_HIGH))
     end
     let (
-        before_offsets_commitmemt,
+        local before_offsets_commitmemt,
         before_priority_operations_processed,
         before_processable_operations_hash
     ) = _collect_onchain_ops(
         _pub_data,
         onchain_op_data=onchain_op_data,
         index = index - 1,
-        _offsets_commitmemt
+        _offsets_commitmemt=_offsets_commitmemt,
+        _uncommitted_priority_requests_offset=_uncommitted_priority_requests_offset,
+        onchain_operation_pubdata_hashs_low=onchain_operation_pubdata_hashs_low,
+        onchain_operation_pubdata_hashs_high=onchain_operation_pubdata_hashs_high
     )
 
     tempvar pubdata_offset = onchain_op_data[index].public_data_offset
@@ -1818,24 +1940,30 @@ func _collect_onchain_ops{
     let (x) = pow(2, chunk_id)
     let (x_and_before_offsets_commitmemt) = bitwise_and(x, before_offsets_commitmemt)
     with_attr error_message("h3"):
-        assert x_and_offsets_commitmemt = 0
+        assert x_and_before_offsets_commitmemt = 0
     end
     let (offsets_commitmemt) = bitwise_or(x, before_offsets_commitmemt)
 
-    let chain_id = read_felt(_pub_data, pubdata_offset + 1, 1)
+    let (_, local chain_id) = read_felt(_pub_data, pubdata_offset + 1, 1)
     check_chain_id(chain_id)
 
-    let op_type = read_felt(_pub_data, pubdata_offset, 1)
+    let (_, op_type) = read_felt(_pub_data, pubdata_offset, 1)
     let next_priority_op_index = _uncommitted_priority_requests_offset + before_priority_operations_processed
 
     let (newPriorityProceeded, opPubData : Bytes, processablePubData : Bytes) = check_onchain_op(
-        op_type, chain_id, _pub_data, pubdata_offset, next_priority_op_index, onchain_op_data[index].ethWitness
+        op_type, chain_id, _pub_data, pubdata_offset, next_priority_op_index, onchain_op_data[index].eth_witness
     )
     let priority_operations_processed = before_priority_operations_processed + newPriorityProceeded
-    let (old_onchain_operation_pubdata_hash : Uint256) = dict_read{dict_ptr=onchain_operation_pubdata_hashs}(key=chain_id)
-    let (new_onchain_operation_pubdata_hash : Uint256) = concat_hash(old_onchain_operation_pubdata_hash, opPubData)
-    dict_update{dict_ptr=onchain_operation_pubdata_hashs}(key=chain_id, new_value=new_onchain_operation_pubdata_hash)
-    let has_processable_pubdata = is_nn(processablePubData.size - 1)
+
+    let (old_onchain_operation_pubdata_hash_low) = dict_read{dict_ptr=onchain_operation_pubdata_hashs_low}(key=chain_id)
+    let (old_onchain_operation_pubdata_hash_high) = dict_read{dict_ptr=onchain_operation_pubdata_hashs_high}(key=chain_id)
+    let (new_onchain_operation_pubdata_hash : Uint256) = concat_hash(
+        Uint256(old_onchain_operation_pubdata_hash_low, old_onchain_operation_pubdata_hash_high), opPubData)
+    
+    dict_write{dict_ptr=onchain_operation_pubdata_hashs_low}(key=chain_id, new_value=new_onchain_operation_pubdata_hash.low)
+    dict_write{dict_ptr=onchain_operation_pubdata_hashs_high}(key=chain_id, new_value=new_onchain_operation_pubdata_hash.high)
+
+    let (has_processable_pubdata) = is_not_zero(processablePubData.size)
     if has_processable_pubdata == 1:
         let (processable_operations_hash : Uint256) = concat_hash(before_processable_operations_hash, processablePubData)
         return (offsets_commitmemt, priority_operations_processed, processable_operations_hash)
@@ -1849,17 +1977,22 @@ func init_onchain_operation_pubdata_hashs{
     pedersen_ptr : HashBuiltin*,
     bitwise_ptr : BitwiseBuiltin*,
     range_check_ptr
-}() -> (onchain_operation_pubdata_hashs : DictAccess*):
+}() -> (low : DictAccess*, high :  DictAccess*):
     alloc_locals
-    tempvar initial_value = Uint256(0, 0)
-    let (local onchain_operation_pubdata_hashs : DictAccess*) = default_dict_new(default_value=initial_value)
+    let (local low : DictAccess*) = default_dict_new(default_value=0)
     default_dict_finalize(
-        dict_accesses_start=onchain_operation_pubdata_hashs,
-        dict_accesses_end=dict_accesses_end,
-        default_value=initial_value
+        dict_accesses_start=low,
+        dict_accesses_end=low,
+        default_value=0
     )
-    _init_onchain_operation_pubdata_hash(onchain_operation_pubdata_hashs, MAX_CHAIN_ID)
-    return (onchain_operation_pubdata_hashs)
+    let (local high : DictAccess*) = default_dict_new(default_value=0)
+    default_dict_finalize(
+        dict_accesses_start=high,
+        dict_accesses_end=high,
+        default_value=0
+    )
+    _init_onchain_operation_pubdata_hash(low, high, MAX_CHAIN_ID)
+    return (low, high)
 end
 
 func _init_onchain_operation_pubdata_hash{
@@ -1867,19 +2000,21 @@ func _init_onchain_operation_pubdata_hash{
     pedersen_ptr : HashBuiltin*,
     bitwise_ptr : BitwiseBuiltin*,
     range_check_ptr
-}(hashs : DictAccess*, i : felt) -> ():
+}(low : DictAccess*, high : DictAccess*, i : felt) -> ():
+    alloc_locals
     if i == MIN_CHAIN_ID - 1:
         return ()
     end
 
-    _init_onchain_operation_pubdata_hash(hashs=hashs, i=i - 1)
+    _init_onchain_operation_pubdata_hash(low=low, high=high, i=i - 1)
 
     let (chain_index_plus_1) = pow(2, i)
     tempvar chain_index = chain_index_plus_1 - 1
 
     let (res) = bitwise_and(chain_index, ALL_CHAINS)
     if res == chain_index:
-        dict_write{dict_ptr=hashs}(key=i, new_value=Uint256(EMPTY_STRING_KECCAK_LOW, EMPTY_STRING_KECCAK_HIGH))
+        dict_write{dict_ptr=low}(key=i, new_value=EMPTY_STRING_KECCAK_LOW)
+        dict_write{dict_ptr=high}(key=i, new_value=EMPTY_STRING_KECCAK_HIGH)
     end
     return ()
 end
@@ -1895,11 +2030,14 @@ func check_chain_id{range_check_ptr, bitwise_ptr : BitwiseBuiltin*}(chain_id : f
     with_attr error_message("i2"):
         assert x_and_y = chain_index
     end
+    return ()
 end
 
 func check_onchain_op{
-    range_check_ptr,
-    bitwise_ptr : BitwiseBuiltin*
+    syscall_ptr : felt*,
+    pedersen_ptr : HashBuiltin*,
+    bitwise_ptr : BitwiseBuiltin*,
+    range_check_ptr
 }(
     op_type : felt,
     chain_id : felt,
@@ -1916,26 +2054,26 @@ func check_onchain_op{
     let (local empty_bytes : Bytes) = create_empty_bytes()
     # ignore check if ops are not part of the current chain
     if op_type == OpType.Deposit:
-        let (op_pubdata : Bytes) = read_bytes(pub_data, public_data_offset, DEPOSIT_BYTES)
+        let (_, op_pubdata : Bytes) = read_bytes(pub_data, public_data_offset, DEPOSIT_BYTES)
         if chain_id == CHAIN_ID:
-            let (op : DepositOperation) = read_deposit_pubdata(op_pubdata)
+            let (deposit_op : DepositOperation) = read_deposit_pubdata(op_pubdata)
             let (pop : PriorityOperation) = get_priorityRequests(next_priority_op_index)
-            check_deposit_with_priority_operation(op, pop)
-            let (processable_pubdata : Bytes) = read_bytes(op_pubdata, 0, op_pubdata.size)
+            check_deposit_with_priority_operation(deposit_op, pop)
+            let (_, processable_pubdata : Bytes) = read_bytes(op_pubdata, 0, op_pubdata.size)
             return (priority_operations_processed=1, op_pubdata=op_pubdata, processable_pubdata=processable_pubdata)
         end
     else:
         if op_type == OpType.ChangePubKey:
-            let (op_pubdata : Bytes) = read_bytes(pub_data, public_data_offset, CHANGE_PUBKEY_BYTES)
+            let (_, op_pubdata : Bytes) = read_bytes(pub_data, public_data_offset, CHANGE_PUBKEY_BYTES)
             if chain_id == CHAIN_ID:
-                let (op : ChangePubKey) = read_changepubkey_pubdata(op_pubdata)
-                let (processable_pubdata : Bytes) = read_bytes(op_pubdata, 0, op_pubdata.size)
+                let (cpk_op : ChangePubKey) = read_changepubkey_pubdata(op_pubdata)
+                let (_, processable_pubdata : Bytes) = read_bytes(op_pubdata, 0, op_pubdata.size)
                 if eth_witness.size == 0 :
-                    let (af : Uint256) = get_authFacts((op.owner, op.nonce))
+                    let (af : Uint256) = get_authFacts((cpk_op.owner, cpk_op.nonce))
                     # TODO: keccak
                     return (priority_operations_processed=0, op_pubdata=op_pubdata, processable_pubdata=processable_pubdata)
                 else:
-                    let (valid) = verify_changepubkey(eth_witness, op)
+                    let (valid) = verify_changepubkey(eth_witness, cpk_op)
                     with_attr error_message("k0"):
                         assert valid = 1
                     end
@@ -1944,35 +2082,43 @@ func check_onchain_op{
             end
         else:
             if op_type == OpType.Withdraw:
-                let (op_pubdata : Bytes) = read_bytes(pub_data, public_data_offset, WITHDRAW_BYTES)
+                let (_, op_pubdata : Bytes) = read_bytes(pub_data, public_data_offset, WITHDRAW_BYTES)
                 return (priority_operations_processed=0, op_pubdata=op_pubdata, processable_pubdata=empty_bytes)
             else:
                 if op_type == OpType.ForcedExit:
-                    let (op_pubdata : Bytes) = read_bytes(pub_data, public_data_offset, FORCED_EXIT_BYTES)
+                    let (_, op_pubdata : Bytes) = read_bytes(pub_data, public_data_offset, FORCED_EXIT_BYTES)
                     return (priority_operations_processed=0, op_pubdata=op_pubdata, processable_pubdata=empty_bytes)
                 else:
                     if op_type == OpType.FullExit:
-                        let (op_pubdata : Bytes) = read_bytes(pub_data, public_data_offset, FULL_EXIT_BYTES)
+                        let (_, op_pubdata : Bytes) = read_bytes(pub_data, public_data_offset, FULL_EXIT_BYTES)
                         if chain_id == CHAIN_ID:
-                            let (op : FullExit) = read_fullexit_pubdata(op_pubdata)
+                            let (fullexit_op : FullExit) = read_fullexit_pubdata(op_pubdata)
                             let (pop : PriorityOperation) = get_priorityRequests(next_priority_op_index)
-                            check_fullexit_with_priority_operation(op, pop)
-                            let (processable_pubdata : Bytes) = read_bytes(op_pubdata, 0, op_pubdata.size)
+                            check_fullexit_with_priority_operation(fullexit_op, pop)
+                            let (_, processable_pubdata : Bytes) = read_bytes(op_pubdata, 0, op_pubdata.size)
                             return (priority_operations_processed=1, op_pubdata=op_pubdata, processable_pubdata=processable_pubdata)
                         end
                     else:
                         # TODO:  revert("k2")
+                        do_nothing:
+                        return (0, empty_bytes, empty_bytes)
                     end
                 end
             end
         end
     end
+
+    jmp do_nothing
 end
 
 # Checks that change operation is correct
 # True return 1, False return 0
-func verify_changepubkey{range_check_ptr, bitwise_ptr : BitwiseBuiltin*}(eth_witness : Bytes, change_pk : ChangePubKey) -> (res : felt):
-    let (changePkType) = read_felt(eth_witness, 0, 1)
+func verify_changepubkey{
+    syscall_ptr : felt*,
+    bitwise_ptr : BitwiseBuiltin*,
+    range_check_ptr
+}(eth_witness : Bytes, change_pk : ChangePubKey) -> (res : felt):
+    let (_, changePkType) = read_felt(eth_witness, 0, 1)
     if changePkType == ChangePubkeyType.ECRECOVER:
         let (res_ECRECOVER) = verify_changepubkey_ECRECOVERP(eth_witness, change_pk)
         return (res_ECRECOVER)
@@ -1982,7 +2128,11 @@ func verify_changepubkey{range_check_ptr, bitwise_ptr : BitwiseBuiltin*}(eth_wit
     end
 end
 
-func verify_changepubkey_ECRECOVERP{range_check_ptr, bitwise_ptr : BitwiseBuiltin*}(eth_witness : Bytes,change_pk : ChangePubKey) -> (res : felt):
+func verify_changepubkey_ECRECOVERP{
+    syscall_ptr : felt*,
+    bitwise_ptr : BitwiseBuiltin*,
+    range_check_ptr
+}(eth_witness : Bytes,change_pk : ChangePubKey) -> (res : felt):
     # offset is 1 because we skip type of ChangePubkey
     let (_, signature : Bytes) = read_bytes(eth_witness, 1, 65)
     let (tx_info) = get_tx_info()
@@ -2007,42 +2157,46 @@ end
 func executeOneBlock{
     syscall_ptr : felt*,
     pedersen_ptr : HashBuiltin*,
+    bitwise_ptr : BitwiseBuiltin*,
     range_check_ptr
 }(_blockExecuteData : ExecuteBlockInfo, _executedBlockIdx : felt) -> (priorityRequestsExecuted : felt):
+    alloc_locals
     # Ensure block was committed
     with_attr error_message("m0"):
         let (hash1) =  hashStoredBlockInfo(_blockExecuteData.storedBlock)
-        let (hash2) = get_storedBlockHashes(_blockExecuteData.storedBlock.blockNumber)
+        let (hash2) = get_storedBlockHashes(_blockExecuteData.storedBlock.block_number)
         let (eq) = uint256_eq(hash1, hash2)
         assert eq = 1
     end
 
     with_attr error_message("m1"):
         let (totalBlocksExecuted) = get_totalBlocksExecuted()
-        assert _blockExecuteData.storedBlock.blockNumber = totalBlocksExecuted + _executedBlockIdx + 1
+        assert _blockExecuteData.storedBlock.block_number = totalBlocksExecuted + _executedBlockIdx + 1
     end
 
     let (pendingOnchainOpsHash : Uint256) = _executeOneBlock(
-        _executeOneBlock.pendingOnchainOpsPubdata, _executeOneBlock.pendingOnchainOpsPubdata_size - 1)
+        _blockExecuteData.pendingOnchainOpsPubdata, _blockExecuteData.pendingOnchainOpsPubdata_len - 1)
     
     with_attr error_message("m3"):
-        let (eq) = uint256_eq(pendingOnchainOpsHash, _blockExecuteData.storedBlock.pendingOnchainOperationsHash)
+        let (eq) = uint256_eq(pendingOnchainOpsHash, _blockExecuteData.storedBlock.pending_onchain_operations_hash)
         assert eq = 1
     end
-    return (_blockExecuteData.storedBlock.priorityOperations)
+    return (_blockExecuteData.storedBlock.priority_operations)
 end
 
 func _executeOneBlock{
     syscall_ptr : felt*,
     pedersen_ptr : HashBuiltin*,
+    bitwise_ptr : BitwiseBuiltin*,
     range_check_ptr
 }(pendingOnchainOpsPubdata : Bytes*, i : felt) -> (hash : Uint256):
+    alloc_locals
     if i == -1:
         return (Uint256(EMPTY_STRING_KECCAK_LOW, EMPTY_STRING_KECCAK_HIGH))
     end
     let (before_hash : Uint256) = _executeOneBlock(pendingOnchainOpsPubdata, i - 1)
 
-    tempvar pubData = pendingOnchainOpsPubdata[i]
+    local pubData : Bytes = pendingOnchainOpsPubdata[i]
 
     let (offset, op_type) = read_felt(pubData, 0, 1)
 
@@ -2051,28 +2205,57 @@ func _executeOneBlock{
     if op_type == OpType.Withdraw:
         let (withdraw : Withdraw) = read_withdraw_pubdata(pubData)
         executeWithdraw(withdraw)
+        tempvar syscall_ptr = syscall_ptr
+        tempvar pedersen_ptr = pedersen_ptr
+        tempvar bitwise_ptr = bitwise_ptr
+        tempvar range_check_ptr = range_check_ptr
     else:
         if op_type == OpType.ForcedExit:
             let (forcedexit : ForcedExit) = read_forcedexit_pubdata(pubData)
-            withdrawOrStore(op.tokenId, op.target, op.amount)
+            withdrawOrStore(forcedexit.tokenId, forcedexit.target, forcedexit.amount)
+            tempvar syscall_ptr = syscall_ptr
+            tempvar pedersen_ptr = pedersen_ptr
+            tempvar bitwise_ptr = bitwise_ptr
+            tempvar range_check_ptr = range_check_ptr
         else:
             if op_type == OpType.FullExit:
                 let (fullexit : FullExit) = read_fullexit_pubdata(pubData)
-                withdrawOrStore(op.tokenId, op.target, op.amount);
+                withdrawOrStore(fullexit.token_id, fullexit.owner, fullexit.amount)
+                tempvar syscall_ptr = syscall_ptr
+                tempvar pedersen_ptr = pedersen_ptr
+                tempvar bitwise_ptr = bitwise_ptr
+                tempvar range_check_ptr = range_check_ptr
             else:
-                # TODO : revert("m2")
+                # revert?
+                tempvar syscall_ptr = syscall_ptr
+                tempvar pedersen_ptr = pedersen_ptr
+                tempvar bitwise_ptr = bitwise_ptr
+                tempvar range_check_ptr = range_check_ptr
             end
         end
     end
+
     let (hash : Uint256) = concat_hash(before_hash, pubData)
     return (hash)
 end
 
 # Execute withdraw operation
-func executeWithdraw{syscall_ptr : felt*, pedersen_ptr : HashBuiltin*, range_check_ptr}(op : Withdraw):
+func executeWithdraw{
+    syscall_ptr : felt*,
+    pedersen_ptr : HashBuiltin*,
+    bitwise_ptr : BitwiseBuiltin*,
+    range_check_ptr
+}(op : Withdraw):
     alloc_locals
+    assert_nn(op.nonce)
     # nonce > 0 means fast withdraw
     if op.nonce == 0:
+        withdrawOrStore(op.tokenId, op.owner, op.amount)
+        tempvar syscall_ptr = syscall_ptr
+        tempvar pedersen_ptr = pedersen_ptr
+        tempvar bitwise_ptr = bitwise_ptr
+        tempvar range_check_ptr = range_check_ptr
+    else:
         let (packed : felt*) = alloc()
         assert packed[0] = op.owner
         assert packed[1] = op.tokenId
@@ -2080,18 +2263,25 @@ func executeWithdraw{syscall_ptr : felt*, pedersen_ptr : HashBuiltin*, range_che
         assert packed[3] = op.fastWithdrawFeeRate
         assert packed[4] = op.nonce
         let (fwHash : Uint256) = hash_array_to_uint256(5, packed)
-        let (address) = get_accept((op.accountId, fwHash))
-        if address == 0:
+        let (accepter) = get_accept((op.accountId, fwHash))
+        if accepter == 0:
             # receiver act as a accepter
             set_accept((op.accountId, fwHash), op.owner)
             withdrawOrStore(op.tokenId, op.owner, op.amount)
+            tempvar syscall_ptr = syscall_ptr
+            tempvar pedersen_ptr = pedersen_ptr
+            tempvar bitwise_ptr = bitwise_ptr
+            tempvar range_check_ptr = range_check_ptr
         else:
             # just increase the pending balance of accepter
             increasePendingBalance(op.tokenId, accepter, op.amount)
+            tempvar syscall_ptr = syscall_ptr
+            tempvar pedersen_ptr = pedersen_ptr
+            tempvar bitwise_ptr = bitwise_ptr
+            tempvar range_check_ptr = range_check_ptr
         end
-    else:
-        withdrawOrStore(op.tokenId, op.owner, op.amount)
     end
+    return ()
 end
 
 # Try to send token to _recipients
@@ -2099,17 +2289,19 @@ end
 func withdrawOrStore{
     syscall_ptr : felt*,
     pedersen_ptr : HashBuiltin*,
+    bitwise_ptr : BitwiseBuiltin*,
     range_check_ptr
 }(
     _tokenId : felt,
     _recipient : felt,
     _amount : felt
 ):
+    alloc_locals
     if _amount == 0:
         return ()
     end
 
-    let (rt : RegisteredToken) = get_token()
+    let (rt : RegisteredToken) = get_token(_tokenId)
     if rt.registered == 0:
         increasePendingBalance(_tokenId, _recipient, _amount)
         return ()
@@ -2129,11 +2321,11 @@ func withdrawOrStore{
     # and fail if token subtracted from zkLink balance more then `_amount` that was requested.
     # This can happen if token subtracts fee from sender while transferring `_amount` that was requested to transfer.
     
-    transfer_ERC20(tokenAddress, _recipient, _amount, _amount, rt.standard)
-    # What about sent fail?
+    transferERC20(tokenAddress, _recipient, _amount, _amount, rt.standard)
+    # TODO: What about sent fail?
     increasePendingBalance(_tokenId, _recipient, _amount)
     # end
-
+    return ()
 end
 
 # Increase `_recipient` balance to withdraw
@@ -2161,7 +2353,7 @@ func createBlockCommitment{range_check_ptr}(
     offsetsCommitment : felt
 ) -> (commitment : Uint256):
     # TODO: sha256
-    return Uint256(0, 0)
+    return (Uint256(0, 0))
 end
 
 #
@@ -2196,7 +2388,8 @@ func getSynchronizedProgress{
     bitwise_ptr : BitwiseBuiltin*,
     range_check_ptr
 }(_block : StoredBlockInfo) -> (progress : Uint256):
-    let (progress) = get_synchronizedChains(_block.sync_hash)
+    alloc_locals
+    let (local progress : Uint256) = get_synchronizedChains(_block.sync_hash)
     # combine the current chain if it has proven this block
     let (totalBlocksProven) = get_totalBlocksProven()
     let (le) = is_le(_block.block_number, totalBlocksProven)
@@ -2205,14 +2398,15 @@ func getSynchronizedProgress{
         let (hash2 : Uint256) = get_storedBlockHashes(_block.block_number)
         let (eq) = uint256_eq(hash1, hash2)
         if eq == 1:
-            let (new_progress) = uint256_or(progress, CHAIN_INDEX)
+            let (new_progress) = uint256_or(progress, Uint256(CHAIN_INDEX, 0))
             return (new_progress)
         end
     else:
         let (new_chain_index : Uint256) = uint256_not(Uint256(CHAIN_INDEX, 0))
-        let (new_progress) = uint256_and(progress, CHAIN_INDEX)
+        let (new_progress) = uint256_and(progress, new_chain_index)
         return (new_progress)
     end
+    return (Uint256(0, 0))
 end
 
 # Check if received all syncHash from other chains at the block height
@@ -2223,8 +2417,9 @@ func syncBlocks{
     bitwise_ptr : BitwiseBuiltin*,
     range_check_ptr
 }(_block : StoredBlockInfo):
+    alloc_locals
     # Lock with reentrancy_guard
-    reentrancy_guard_lock()
+    ReentrancyGuard._start()
 
     with_attr error_message("D0"):
         let (progress : Uint256) = getSynchronizedProgress(_block)
@@ -2240,7 +2435,7 @@ func syncBlocks{
     set_totalBlocksSynchronized(_block.block_number)
 
     # Unlock
-    reentrancy_guard_unlock()
+    ReentrancyGuard._end()
     return ()
 end
 
@@ -2269,7 +2464,7 @@ end
 #     nonce : felt
 # ):
 #     # Lock with reentrancy_guard
-#     reentrancy_guard_lock()
+#     ReentrancyGuard._start()
 
 #     # Checks
 #     let (tokenId) = get_token_id(ETH_ADDRESS)
@@ -2284,7 +2479,7 @@ end
 
 
 #     # Unlock
-#     reentrancy_guard_unlock()
+#     ReentrancyGuard._end()
 #     return ()
 # end
 
@@ -2305,17 +2500,18 @@ func acceptERC20{
     bitwise_ptr : BitwiseBuiltin*,
     range_check_ptr
 }(
-    accepter : felt
+    accepter : felt,
     accountId : felt,
     receiver : felt,
-    tokenId : felt
+    tokenId : felt,
     amount : felt,
     withdrawFeeRate : felt,
     nonce : felt,
     amountTransfer : felt
 ):
+    alloc_locals
     # Lock with reentrancy_guard
-    reentrancy_guard_lock()
+    ReentrancyGuard._start()
 
     # Checks
     let (amountReceive : felt, hash : Uint256, tokenAddress) = _checkAccept(
@@ -2325,40 +2521,48 @@ func acceptERC20{
     set_accept((accountId, hash), accepter)
 
     # Interactions
-    let (receiverBalanceBefore : Uint256) = IERC20.balanceOf(contract_address=tokenAddress, acount=receiver)
-    let (accepterBalanceBefore : Uint256) = IERC20.balanceOf(contract_address=tokenAddress, acount=accepter)
+    let (receiverBalanceBefore : Uint256) = IERC20.balanceOf(contract_address=tokenAddress, account=receiver)
+    let (accepterBalanceBefore : Uint256) = IERC20.balanceOf(contract_address=tokenAddress, account=accepter)
     IERC20.transferFrom(
         contract_address=tokenAddress,
         sender=accepter,
         recipient=receiver,
         amount=Uint256(amountTransfer, 0)
     )
-    let (receiverBalanceAfter : Uint256) = IERC20.balanceOf(contract_address=tokenAddress, acount=receiver)
-    let (accepterBalanceAfter : Uint256) = IERC20.balanceOf(contract_address=tokenAddress, acount=accepter)
+    let (receiverBalanceAfter : Uint256) = IERC20.balanceOf(contract_address=tokenAddress, account=receiver)
+    let (accepterBalanceAfter : Uint256) = IERC20.balanceOf(contract_address=tokenAddress, account=accepter)
     let (receiverBalanceDiff : Uint256) = uint256_sub(receiverBalanceAfter, receiverBalanceBefore)
-    let (receiverBalanceDiff) = uint256_to_felt(receiverBalanceDiff)
+    let (receiverBalanceDiff_u128) = uint256_to_felt(receiverBalanceDiff)
     with_attr error_message("F0"):
-        assert_le(amountReceive, receiverBalanceDiff)
+        assert_le(amountReceive, receiverBalanceDiff_u128)
     end
-    tempvar amountReceive = receiverBalanceDiff
+    tempvar amountReceive = receiverBalanceDiff_u128
     let (accepterBalanceDiff) = uint256_sub(accepterBalanceAfter, accepterBalanceBefore)
     let (local amountSent) = uint256_to_felt(accepterBalanceDiff)
 
     let (local sender) = get_caller_address()
     if sender == accepter:
         # Do nothing
+        tempvar syscall_ptr = syscall_ptr
+        tempvar pedersen_ptr = pedersen_ptr
+        tempvar bitwise_ptr = bitwise_ptr
+        tempvar range_check_ptr = range_check_ptr
     else:
-        let (local old_allowance) = brokerAllowance(tokenId, accepter, sneder)
+        let (local old_allowance) = brokerAllowance(tokenId, accepter, sender)
         with_attr error_message("F1"):
-            assert_le(amountSent, allowance)
+            assert_le(amountSent, old_allowance)
         end
         set_brokerAllowances((tokenId, accepter, sender), old_allowance - amountSent)
+        tempvar syscall_ptr = syscall_ptr
+        tempvar pedersen_ptr = pedersen_ptr
+        tempvar bitwise_ptr = bitwise_ptr
+        tempvar range_check_ptr = range_check_ptr
     end
 
     Accept.emit(accepter, accountId, receiver, tokenId, amountSent, amountReceive)
 
     # Unlock
-    reentrancy_guard_unlock()
+    ReentrancyGuard._end()
     return ()
 end
 
@@ -2400,7 +2604,7 @@ func _checkAccept{
     accepter : felt,
     accountId : felt,
     receiver : felt,
-    tokenId : felt
+    tokenId : felt,
     amount : felt,
     withdrawFeeRate : felt,
     nonce : felt

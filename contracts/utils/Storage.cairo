@@ -25,6 +25,16 @@ func get_totalBlocksExecuted{
     return (blocks)
 end
 
+func set_totalBlocksExecuted{
+    syscall_ptr : felt*,
+    pedersen_ptr : HashBuiltin*,
+    range_check_ptr
+}(blocks : felt):
+    assert_nn(blocks)
+    totalBlocksExecuted.write(blocks)
+    return ()
+end
+
 func increase_totalBlocksExecuted{
     syscall_ptr : felt*,
     pedersen_ptr : HashBuiltin*,
@@ -570,7 +580,7 @@ func set_brokerAllowances{
     pedersen_ptr : HashBuiltin*,
     range_check_ptr
 }(key : (felt, felt, felt), allowance : felt):
-    accepts.write(key, allowance)
+    brokerAllowances.write(key, allowance)
     return ()
 end
 
@@ -734,7 +744,7 @@ func set_synchronizedChains{
     syscall_ptr : felt*,
     pedersen_ptr : HashBuiltin*,
     range_check_ptr
-}(key : felt, value : Uint256):
+}(key : Uint256, value : Uint256):
     synchronizedChains.write(key, value)
     return ()
 end
@@ -754,7 +764,7 @@ func get_pendingBalances{
     return (balance)
 end
 
-func increase_pendingBalances{
+func set_pendingBalances{
     syscall_ptr : felt*,
     pedersen_ptr : HashBuiltin*,
     range_check_ptr
@@ -837,8 +847,8 @@ end
 
 # Returns the keccak hash of the ABI-encoded StoredBlockInfo
 func hashStoredBlockInfo{
-    range_check_ptr,
-    bitwise_ptr : BitwiseBuiltin*
+    bitwise_ptr : BitwiseBuiltin*,
+    range_check_ptr
 }(_storedBlockInfo : StoredBlockInfo) -> (hash : Uint256):
     # TODO : keccak
     return (Uint256(0, 0))
@@ -855,6 +865,6 @@ func increaseBalanceToWithdraw{
     tempvar new_balance = balance + _amount
     assert_nn(new_balance - _amount)
 
-    increase_pendingBalances(_packedBalanceKey, new_balance)
+    set_pendingBalances(_packedBalanceKey, new_balance)
     return ()
 end
