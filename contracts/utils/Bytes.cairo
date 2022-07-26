@@ -8,7 +8,7 @@ from starkware.cairo.common.uint256 import Uint256
 from starkware.cairo.common.memcpy import memcpy
 
 # bytes of per felt
-const FELT_MAX_BYTES = 31
+const FELT_MAX_BYTES = 16
 
 struct Bytes:
     member _start : felt            # cause get a sub Bytes from a Bytes, firt actual data maybe not at 0
@@ -58,20 +58,43 @@ func read_felt{range_check_ptr}(
     assert_nn_le(offset + size, bytes.size)
     assert_nn_le(size * 8, 252)
 
-    tempvar actual_offset = offset + bytes._start
-
     # data in one felt or two felts
-    let (local index, local felt_offset) = unsigned_div_rem(actual_offset, bytes.bytes_per_felt)
+    let (local index, local felt_offset) = unsigned_div_rem(offset + bytes._start, bytes.bytes_per_felt)
+    # if the last felt of bytes.data is full filled data, full is zero
+    let (_, local full) = unsigned_div_rem(bytes.size + bytes._start, bytes.bytes_per_felt)
     let (one_felt) = is_le(felt_offset + size, bytes.bytes_per_felt)
 
     if one_felt == 1:
-        let (data1) = split_bytes(bytes.bytes_per_felt, bytes.data[index], felt_offset, size)
-        return (offset + size, data1)
+        if index == bytes.data_length - 1:
+            if full == 0:
+                let (data) = split_bytes(bytes.bytes_per_felt, bytes.data[index], felt_offset, size)
+                return (offset + size, data)
+            else:
+                let (data) = split_bytes(full, bytes.data[index], felt_offset, size)
+                return (offset + size, data)
+            end
+        else:
+            let (data) = split_bytes(bytes.bytes_per_felt, bytes.data[index], felt_offset, size)
+            return (offset + size, data)
+        end
     else:
-        let (data2_1) = split_bytes(bytes.bytes_per_felt, bytes.data[index], felt_offset, bytes.bytes_per_felt - felt_offset)
-        let (data2_2) = split_bytes(bytes.bytes_per_felt, bytes.data[index + 1], 0, size - bytes.bytes_per_felt + felt_offset)
-        let (data2) = join_bytes(data2_1, data2_2, size - bytes.bytes_per_felt + felt_offset)
-        return (offset + size, data2)
+        let (data1) = split_bytes(bytes.bytes_per_felt, bytes.data[index], felt_offset, bytes.bytes_per_felt - felt_offset)
+        if index + 1 == bytes.data_length - 1:
+            if full == 0:
+                let (data2) = split_bytes(bytes.bytes_per_felt, bytes.data[index + 1], 0, size - bytes.bytes_per_felt + felt_offset)
+                let (data) = join_bytes(data1, data2, size - bytes.bytes_per_felt + felt_offset)
+                return (offset + size, data)
+            else:
+                let (data2) = split_bytes(full, bytes.data[index + 1], 0, size - bytes.bytes_per_felt + felt_offset)
+                let (data) = join_bytes(data1, data2, size - bytes.bytes_per_felt + felt_offset)
+                return (offset + size, data)
+            end
+        else:
+            let (data2) = split_bytes(bytes.bytes_per_felt, bytes.data[index + 1], 0, size - bytes.bytes_per_felt + felt_offset)
+            let (data) = join_bytes(data1, data2, size - bytes.bytes_per_felt + felt_offset)
+            return (offset + size, data)
+        end
+
     end
 end
 
@@ -112,9 +135,13 @@ func read_uint256{range_check_ptr}(
     # checks
     assert_nn_le(offset + 32, bytes.size)
 
-    let (local high_offset, local high_part) = read_felt(bytes, offset, 16)
-    let (local low_offset, local low_part) = read_felt(bytes, high_offset, 16)
-    return (low_offset, Uint256(low_part, high_part))
+    let (local base) = pow(256, 8)
+
+    let (new_offset, data1) = read_felt(bytes, offset, 8)
+    let (new_offset, data2) = read_felt(bytes, new_offset, 8)
+    let (new_offset, data3) = read_felt(bytes, new_offset, 8)
+    let (new_offset, data4) = read_felt(bytes, new_offset, 8)
+    return (new_offset, Uint256(data1 * base + data2, data3 * base + data4))
 end
 
 func read_uint256_array{range_check_ptr}(
@@ -153,30 +180,82 @@ func read_bytes{range_check_ptr}(
     let (local data : felt*) = alloc()
     # checks
     assert_nn_le(offset + size, bytes.size)
-    with_attr error_message("size is smaller than a felt, maybe not use this function"):
-        assert_nn_le(252, size * 8)
-    end
 
-    tempvar actual_offset = offset + bytes._start
-    # get first felt of Bytes data
-    let (local start_index, local start) = unsigned_div_rem(actual_offset, bytes.bytes_per_felt)
-    let (first) = split_bytes(bytes.bytes_per_felt, bytes.data[start_index], start, bytes.bytes_per_felt - start)
-    assert data[0] = first
 
-    # copy middle felt*
+    let (local start_index, local start) = unsigned_div_rem(offset + bytes._start, bytes.bytes_per_felt)
     let (local end_index, local end_offset) = unsigned_div_rem(offset + size + bytes._start, bytes.bytes_per_felt)
-    memcpy(data + 1, bytes.data + start_index + 1, end_index - start_index - 1)
+    # if the last felt of bytes.data is full filled data, full is zero
+    let (_, local full) = unsigned_div_rem(bytes.size + bytes._start, bytes.bytes_per_felt)
 
-    # get last felt of Bytes data
-    let (last) = split_bytes(bytes.bytes_per_felt, bytes.data[end_index], 0, end_offset)
-    assert data[end_index - start_index] = last
-    return (offset + size, Bytes(
-        _start=start,
-        bytes_per_felt=bytes.bytes_per_felt,
-        size=size,
-        data_length=end_index - start_index,
-        data=data
-    ))
+    if start_index == end_index:
+        tempvar first = 0
+        if start_index == bytes.data_length - 1:
+            if full == 0:
+                let (first) = split_bytes(bytes.bytes_per_felt, bytes.data[start_index], start, size)
+            else:
+                let (first) = split_bytes(full, bytes.data[start_index], start, size)
+            end
+        else:
+            let (first) = split_bytes(bytes.bytes_per_felt, bytes.data[start_index], start, size)
+        end
+        
+        assert data[0] = first
+        return (offset + size, Bytes(
+            _start=start,
+            bytes_per_felt=bytes.bytes_per_felt,
+            size=size,
+            data_length=1,
+            data=data
+        ))
+    else:
+        if end_index - start_index == 1:
+            let (first) = split_bytes(bytes.bytes_per_felt, bytes.data[start_index], start, bytes.bytes_per_felt - start)
+            assert data[0] = first
+            tempvar last = 0
+            if end_index == bytes.data_length - 1:
+                if full == 0:
+                    let (last) = split_bytes(bytes.bytes_per_felt, bytes.data[end_index], 0, end_offset)
+                else:
+                    let (last) = split_bytes(full, bytes.data[end_index], 0, end_offset)
+                end
+            else:
+                let (last) = split_bytes(bytes.bytes_per_felt, bytes.data[end_index], 0, end_offset)
+            end
+            assert data[1] = last
+            return (offset + size, Bytes(
+                _start=start,
+                bytes_per_felt=bytes.bytes_per_felt,
+                size=size,
+                data_length=2,
+                data=data
+            ))
+        else:
+            let (first) = split_bytes(bytes.bytes_per_felt, bytes.data[start_index], start, bytes.bytes_per_felt - start)
+            assert data[0] = first
+            
+
+            memcpy(data + 1, bytes.data + start_index + 1, end_index - start_index - 1)
+
+            tempvar last = 0
+            if end_index == bytes.data_length - 1:
+                if full == 0:
+                    let (last) = split_bytes(bytes.bytes_per_felt, bytes.data[end_index], 0, end_offset)
+                else:
+                    let (last) = split_bytes(full, bytes.data[end_index], 0, end_offset)
+                end
+            else:
+                let (last) = split_bytes(bytes.bytes_per_felt, bytes.data[end_index], 0, end_offset)
+            end
+            assert data[end_index - start_index] = last
+            return (offset + size, Bytes(
+                _start=start,
+                bytes_per_felt=bytes.bytes_per_felt,
+                size=size,
+                data_length=end_index - start_index + 1,
+                data=data
+            ))
+        end
+    end
 end
 
 func create_empty_bytes() -> (bytes : Bytes):
