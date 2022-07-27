@@ -4,6 +4,30 @@
 from starkware.cairo.common.cairo_builtins import HashBuiltin, BitwiseBuiltin
 from starkware.cairo.common.uint256 import Uint256
 
+@storage_var
+func verifyResult() -> (res : felt):
+end
+
+@external
+func setVerifyResult{
+    syscall_ptr : felt*,
+    pedersen_ptr : HashBuiltin*,
+    range_check_ptr
+}(value : felt):
+    verifyResult.write(value)
+    return ()
+end
+
+@view
+func getVerifyResult{
+    syscall_ptr : felt*,
+    pedersen_ptr : HashBuiltin*,
+    range_check_ptr
+}() -> (res : felt):
+    let (res) = verifyResult.read()
+    return (res)
+end
+
 @external
 func verifyAggregatedBlockProof{
     syscall_ptr : felt*,
@@ -12,7 +36,8 @@ func verifyAggregatedBlockProof{
     range_check_ptr
 }(size : felt, data_len : felt, data : felt*) -> (res : felt):
     # TODO: implement zk verifier system on starknet
-    return (1)
+    let (res) = getVerifyResult()
+    return (res)
 end
 
 @external
@@ -33,5 +58,6 @@ func verifyExitProof{
     size : felt, data_len : felt, data : felt*
 ) -> (res : felt):
     # TODO: implement zk verifier system on starknet
-    return (1)
+    let (res) = getVerifyResult()
+    return (res)
 end

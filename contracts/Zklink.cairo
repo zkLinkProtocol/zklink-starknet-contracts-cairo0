@@ -807,31 +807,43 @@ end
 
 # Register full exit request - pack pubdata, add priority request
 @external
-func request_full_exit{
+func requestFullExit{
     syscall_ptr : felt*,
     pedersen_ptr : HashBuiltin*,
     bitwise_ptr : BitwiseBuiltin*,
     range_check_ptr
-}(account_id : felt, sub_account_id : felt, token_id : felt):
+}(_accountId : felt, _subAccountId : felt, _tokenId : felt, _mapping : felt):
+    alloc_locals
     # Lock with reentrancy_guard
     ReentrancyGuard._start()
+    active()
 
     # Checks
     # account_id and sub_account_id MUST be valid
     with_attr error_message("a0"):
-        assert_nn_le(account_id, MAX_ACCOUNT_ID)
+        assert_nn_le(_accountId, MAX_ACCOUNT_ID)
     end
     with_attr error_message("a1"):
-        assert_nn_le(sub_account_id, MAX_SUB_ACCOUNT_ID)
+        assert_nn_le(_subAccountId, MAX_SUB_ACCOUNT_ID)
     end
     # token MUST be registered to ZkLink
-    let (rt : RegisteredToken) = get_token(token_id)
+    let (local rt : RegisteredToken) = get_token(_tokenId)
     with_attr error_message("a2"):
         assert rt.registered = 1
     end
+
+    if _mapping == 1:
+        with_attr error_message("a3"):
+            assert_lt(0, rt.mappingTokenId)
+        end
+        tempvar range_check_ptr = range_check_ptr
+    else:
+        tempvar range_check_ptr = range_check_ptr
+    end
+
     # to prevent ddos
     let (requests) = get_totalOpenPriorityRequests()
-    with_attr error_message("a3"):
+    with_attr error_message("a4"):
         assert_nn_le(requests, MAX_PRIORITY_REQUESTS - 1)
     end
 
@@ -839,14 +851,27 @@ func request_full_exit{
     # Priority Queue request
     let (chain_id) = get_chain_id()
     let (sender) = get_caller_address()
-    let op = FullExit(
-        chain_id=chain_id,
-        account_id=account_id,
-        sub_account_id=sub_account_id,
-        owner=sender,   # Only the owner of account can fullExit for them self
-        token_id=token_id,
-        amount=0    # unknown at this point
-    )
+    if _mapping == 1:
+        tempvar op = FullExit(
+            chainId=chain_id,
+            accountId=_accountId,
+            subAccountId=_subAccountId,
+            owner=sender,   # Only the owner of account can fullExit for them self
+            tokenId=_tokenId,
+            srcTokenId = rt.mappingTokenId,
+            amount=0    # unknown at this point
+        )
+    else:
+        tempvar op = FullExit(
+            chainId=chain_id,
+            accountId=_accountId,
+            subAccountId=_subAccountId,
+            owner=sender,   # Only the owner of account can fullExit for them self
+            tokenId=_tokenId,
+            srcTokenId=_tokenId,
+            amount=0    # unknown at this point
+        )
+    end
     let (num, pub_data) = convert_fullexit_operation_to_array(op)
     add_priority_request(op_type=OpType.FullExit, pub_data=pub_data, n_elements=num)
     # Unlock
@@ -1580,7 +1605,7 @@ func deposit{
     end
 
     let (token_id) = get_token_id(_tokenAddress)
-    let (rt : RegisteredToken) = get_token(token_id)
+    let (local rt : RegisteredToken) = get_token(token_id)
 
     # token MUST be registered to ZkLink and deposit MUST be enabled
     with_attr error_message("e3"):
@@ -1590,12 +1615,10 @@ func deposit{
         assert rt.paused = 0
     end
 
-    let targetTokenId = token_id
     if _mapping == 1:
         with_attr error_message("e5"):
             assert_lt(0, rt.mappingTokenId)
         end
-        targetTokenId = rt.mappingTokenId
         tempvar range_check_ptr = range_check_ptr
     else:
         tempvar range_check_ptr = range_check_ptr
@@ -1610,15 +1633,28 @@ func deposit{
     # Effects
     # Priority Queue request
     let (chain_id) = get_chain_id()
-    let op = DepositOperation(
-        chain_id=chain_id,
-        account_id=0,
-        sub_account_id=_subAccountId,
-        token_id=token_id,
-        target_token_id=targetTokenId,
-        amount=_amount,
-        owner=_zkLinkAddress
-    )
+    if _mapping == 1:
+        tempvar op = DepositOperation(
+            chain_id=chain_id,
+            account_id=0,
+            sub_account_id=_subAccountId,
+            token_id=token_id,
+            target_token_id=rt.mappingTokenId,
+            amount=_amount,
+            owner=_zkLinkAddress
+        )
+    else:
+        tempvar op = DepositOperation(
+            chain_id=chain_id,
+            account_id=0,
+            sub_account_id=_subAccountId,
+            token_id=token_id,
+            target_token_id=token_id,
+            amount=_amount,
+            owner=_zkLinkAddress
+        )
+    end
+
     let (num, pub_data) = convert_deposit_operation_to_array(op)
     add_priority_request(op_type=OpType.Deposit, pub_data=pub_data, n_elements=num)
 
@@ -2220,7 +2256,7 @@ func _executeOneBlock{
         else:
             if op_type == OpType.FullExit:
                 let (fullexit : FullExit) = read_fullexit_pubdata(pubData)
-                withdrawOrStore(fullexit.token_id, fullexit.owner, fullexit.amount)
+                withdrawOrStore(fullexit.tokenId, fullexit.owner, fullexit.amount)
                 tempvar syscall_ptr = syscall_ptr
                 tempvar pedersen_ptr = pedersen_ptr
                 tempvar bitwise_ptr = bitwise_ptr
