@@ -144,43 +144,6 @@ func set_periphery_contract_address{
     return ()
 end
 
-# Network Governor address. The the owner of whole system
-@storage_var
-func network_governor_address() -> (address : felt):
-end
-
-@view
-func get_network_governor_address{
-    syscall_ptr : felt*,
-    pedersen_ptr : HashBuiltin*,
-    range_check_ptr
-}() -> (address : felt):
-    let (address) = network_governor_address.read()
-    return (address)
-end
-
-func set_network_governor_address{
-    syscall_ptr : felt*,
-    pedersen_ptr : HashBuiltin*,
-    range_check_ptr
-}(address : felt):
-    network_governor_address.write(address)
-    return ()
-end
-
-func only_governor{
-    syscall_ptr : felt*,
-    pedersen_ptr : HashBuiltin*,
-    range_check_ptr
-}():
-    let (sender) = get_caller_address()
-    let (governor) = get_network_governor_address()
-    with_attr error_message("3"):
-        assert governor = sender
-    end
-    return ()
-end
-
 # Total number of committed blocks i.e. blocks[totalBlocksCommitted] points at the latest committed block
 @storage_var
 func totalBlocksCommitted() -> (blocks : felt):
@@ -266,6 +229,15 @@ func get_totalOpenPriorityRequests{
 }() -> (requests : felt):
     let (requests) = totalOpenPriorityRequests.read()
     return (requests=requests)
+end
+
+func set_totalOpenPriorityRequests{
+    syscall_ptr : felt*,
+    pedersen_ptr : HashBuiltin*,
+    range_check_ptr
+}(requests : felt):
+    totalOpenPriorityRequests.write(requests)
+    return ()
 end
 
 func sub_totalOpenPriorityRequests{

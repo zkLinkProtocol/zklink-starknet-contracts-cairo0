@@ -3,12 +3,21 @@
 from starkware.cairo.common.cairo_builtins import HashBuiltin, BitwiseBuiltin
 from starkware.cairo.common.uint256 import Uint256
 from starkware.cairo.common.dict_access import DictAccess
+
+from openzeppelin.upgrades.library import Proxy
+
 from contracts.utils.Storage import (
     StoredBlockInfo,
     set_exodusMode,
+    set_accept,
+    get_accept,
+    get_authFacts,
     get_priorityRequests,
     set_storedBlockHashes,
     set_totalBlocksExecuted,
+    set_totalBlocksProven,
+    set_totalOpenPriorityRequests,
+    set_synchronizedChains,
     hashStoredBlockInfo
 )
 from contracts.utils.Operations import PriorityOperation, Withdraw
@@ -42,6 +51,16 @@ func getPriorityHash{
 }(index : felt) -> (hash : felt):
     let (res : PriorityOperation) = get_priorityRequests(index)
     return (res.hashedPubData)
+end
+
+@external
+func setExodus{
+    syscall_ptr : felt*,
+    pedersen_ptr : HashBuiltin*,
+    range_check_ptr
+}(_exodusMode : felt):
+    set_exodusMode(_exodusMode)
+    return ()
 end
 
 @external
@@ -130,5 +149,59 @@ func testExecuteWithdraw{
     range_check_ptr
 }(op : Withdraw):
     executeWithdraw(op)
+    return ()
+end
+
+@external
+func setGovernor{
+    syscall_ptr : felt*,
+    pedersen_ptr : HashBuiltin*,
+    range_check_ptr
+}(governor : felt):
+    Proxy.assert_only_admin()
+    Proxy._set_admin(governor)
+    return ()
+end
+
+@external
+func setAccepter{
+    syscall_ptr : felt*,
+    pedersen_ptr : HashBuiltin*,
+    range_check_ptr
+}(accountId : felt, hash : Uint256, accepter : felt):
+    set_accept((accountId, hash), accepter)
+    return ()
+end
+
+@external
+func mockProveBlock{
+    syscall_ptr : felt*,
+    pedersen_ptr : HashBuiltin*,
+    bitwise_ptr : BitwiseBuiltin*,
+    range_check_ptr
+}(storedBlockInfo : StoredBlockInfo):
+    let (hash : Uint256) = hashStoredBlockInfo(storedBlockInfo)
+    set_storedBlockHashes(storedBlockInfo.block_number, hash)
+    set_totalBlocksProven(storedBlockInfo.block_number)
+    return ()
+end
+
+@external
+func setTotalOpenPriorityRequests{
+    syscall_ptr : felt*,
+    pedersen_ptr : HashBuiltin*,
+    range_check_ptr
+}(_totalOpenPriorityRequests : felt):
+    set_totalOpenPriorityRequests(_totalOpenPriorityRequests)
+    return ()
+end
+
+@external
+func setSyncProgress{
+    syscall_ptr : felt*,
+    pedersen_ptr : HashBuiltin*,
+    range_check_ptr
+}(syncHash : Uint256, progress : Uint256):
+    set_synchronizedChains(syncHash, progress)
     return ()
 end

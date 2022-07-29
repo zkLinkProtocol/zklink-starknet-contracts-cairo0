@@ -9,9 +9,6 @@ from starkware.cairo.common.uint256 import (
     uint256_not, uint256_lt
 )
 from starkware.cairo.common.bitwise import bitwise_and, bitwise_or
-from openzeppelin.token.erc20.interfaces.IERC20 import IERC20
-from openzeppelin.security.initializable import Initializable
-from openzeppelin.security.reentrancyguard import ReentrancyGuard
 from starkware.cairo.common.cairo_builtins import (
     HashBuiltin,
     BitwiseBuiltin
@@ -23,6 +20,11 @@ from starkware.cairo.common.default_dict import default_dict_new, default_dict_f
 from starkware.cairo.common.dict import dict_write, dict_read, dict_update
 from starkware.cairo.common.dict_access import DictAccess
 from starkware.cairo.common.squash_dict import squash_dict
+
+from openzeppelin.token.erc20.interfaces.IERC20 import IERC20
+from openzeppelin.security.initializable import Initializable
+from openzeppelin.security.reentrancyguard import ReentrancyGuard
+from openzeppelin.upgrades.library import Proxy
 
 from starkware.starknet.common.syscalls import (
     get_block_number,
@@ -171,9 +173,6 @@ from contracts.utils.Storage import (
     increaseBalanceToWithdraw,
     get_accept,
     set_accept,
-    get_network_governor_address,
-    set_network_governor_address,
-    only_governor,
     get_brokerAllowances,
     set_brokerAllowances
 )
@@ -384,6 +383,16 @@ end
 # Upgrade interface
 #
 
+@view
+func getGovernor{
+    syscall_ptr : felt*,
+    pedersen_ptr : HashBuiltin*,
+    range_check_ptr
+}() -> (address: felt):
+    let (address) = Proxy.get_admin()
+    return (address)
+end
+
 # Notice period before activation preparation status of upgrade mode
 @external
 func get_notice_period() -> (res : felt):
@@ -408,12 +417,13 @@ end
 # ZkLink contract initialization.
 # Can be external because Proxy contract intercepts illegal calls of this function.
 @external
-func initialize{
+func initializer{
     syscall_ptr : felt*,
     pedersen_ptr : HashBuiltin*,
     bitwise_ptr : BitwiseBuiltin*,
     range_check_ptr
 }(
+
     _verifierAddress : felt,
     _networkGovernor : felt,
     _blockNumber : felt,
@@ -422,6 +432,9 @@ func initialize{
     _commitment : Uint256,
     _syncHash : Uint256
 ):
+    # Must call proxy init function immediately
+    Proxy.initializer(_networkGovernor)
+
     # Check if Zklink contract was already initialized
     let (initialized) = Initializable.initialized()
     assert initialized = 0
@@ -431,11 +444,7 @@ func initialize{
     with_attr error_message("i0"):
         assert_not_zero(_verifierAddress)
     end
-    with_attr error_message("i1"):
-        assert_not_zero(_networkGovernor)
-    end
     set_verifier_contract_address(_verifierAddress)
-    set_network_governor_address(_networkGovernor)
 
     # We need initial state hash because it is used in the commitment of the next block
     let storedBlockZero = StoredBlockInfo(
@@ -468,9 +477,9 @@ func upgrade{
     syscall_ptr : felt*,
     pedersen_ptr : HashBuiltin*,
     range_check_ptr
-}(periphery_address : felt):
-    only_delegate_call()
-    set_periphery_contract_address(periphery_address)
+}(new_implementation : felt):
+    Proxy.assert_only_admin()
+    Proxy._set_implementation_hash(new_implementation)
     return ()
 end
 
@@ -1299,15 +1308,16 @@ func changeGovernor{
     bitwise_ptr : BitwiseBuiltin*,
     range_check_ptr
 }(_newGovernor : felt):
-    only_governor()
+    Proxy.assert_only_admin()
+
     with_attr error_message("H"):
         assert_not_equal(_newGovernor, 0)
     end
-    let (networkGovernor) = get_network_governor_address()
+    let (networkGovernor) = Proxy.get_admin()
     if networkGovernor == _newGovernor:
         return ()
     else:
-        set_network_governor_address(_newGovernor)
+        Proxy._set_admin(_newGovernor)
         NewGovernor.emit(_newGovernor)
     end
     return ()
@@ -1430,7 +1440,7 @@ func setTokenPaused{
 }(_tokenId : felt, _tokenPaused : felt):
     alloc_locals
     # only governor
-    only_governor()
+    Proxy.assert_only_admin()
 
     let (local rt : RegisteredToken) = get_token(_tokenId)
     with_attr error_message("K"):
@@ -1463,7 +1473,7 @@ func setValidator{
     bitwise_ptr : BitwiseBuiltin*,
     range_check_ptr
 }(_validator : felt, _active : felt):
-    only_governor()
+    Proxy.assert_only_admin()
 
     let (valid) = get_validator(_validator)
     if valid == _active:
@@ -1484,7 +1494,7 @@ func addBridge{
     bitwise_ptr : BitwiseBuiltin*,
     range_check_ptr
 }(bridge : felt):
-    only_governor()
+    Proxy.assert_only_admin()
 
     with_attr error_message("L0"):
         assert_not_zero(bridge)
@@ -1521,7 +1531,7 @@ func updateBridge{
     bitwise_ptr : BitwiseBuiltin*,
     range_check_ptr
 }(index : felt, enableBridgeTo : felt, enableBridgeFrom : felt):
-    only_governor()
+    Proxy.assert_only_admin()
 
     with_attr error_message("M"):
         let (len) = get_bridge_length()
