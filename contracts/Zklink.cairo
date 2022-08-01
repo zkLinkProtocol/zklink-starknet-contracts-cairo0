@@ -237,13 +237,24 @@ func parse_onchain_operation_data{range_check_ptr}(
     end
     let (offset) = parse_onchain_operation_data(bytes, _offset, index - 1, onchain_operations)
     let (offset, public_data_offset) = read_felt(bytes, offset, 4)
-    let (offset, local sub_size) = read_felt(bytes, offset, 4)
-    let (offset, eth_witness) = read_bytes(bytes, offset, sub_size)
+    let (offset, eth_witness : Bytes) = parse_eth_witness(bytes, offset)
     assert onchain_operations[index] = OnchainOperationData(
         public_data_offset=public_data_offset,
         eth_witness=eth_witness
     )
     return (offset)
+end
+
+func parse_eth_witness{range_check_ptr}(bytes : Bytes, _offset : felt) -> (offset : felt, eth_witness : Bytes):
+    alloc_locals
+    let (offset, local eth_witness_size) = read_felt(bytes, _offset, 4)
+    if eth_witness_size == 0:
+        let (eth_witness : Bytes) = create_empty_bytes()
+        return (offset, eth_witness)
+    else:
+        let (offset, eth_witness : Bytes) = read_bytes(bytes, offset, eth_witness_size)
+        return (offset, eth_witness)
+    end
 end
 
 # Data needed to commit new block

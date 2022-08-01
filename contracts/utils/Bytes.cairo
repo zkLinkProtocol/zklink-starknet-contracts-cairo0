@@ -1,7 +1,7 @@
 %lang starknet
 
 from starkware.cairo.common.alloc import alloc
-from starkware.cairo.common.math import assert_nn_le, unsigned_div_rem
+from starkware.cairo.common.math import assert_nn_le, unsigned_div_rem, assert_not_zero
 from starkware.cairo.common.math_cmp import is_le
 from starkware.cairo.common.pow import pow
 from starkware.cairo.common.uint256 import Uint256
@@ -24,6 +24,8 @@ func split_bytes{
     range_check_ptr
 }(input_bytes : felt, input : felt, offset : felt, data_length : felt) -> (output : felt):
     alloc_locals
+    assert_not_zero(input_bytes)
+    assert_not_zero(data_length)
     assert_nn_le(data_length, input_bytes)
 
     tempvar offset_end = offset + data_length
@@ -141,7 +143,7 @@ func read_uint256{range_check_ptr}(
     let (new_offset, data2) = read_felt(bytes, new_offset, 8)
     let (new_offset, data3) = read_felt(bytes, new_offset, 8)
     let (new_offset, data4) = read_felt(bytes, new_offset, 8)
-    return (new_offset, Uint256(data1 * base + data2, data3 * base + data4))
+    return (new_offset, Uint256(data3 * base + data4, data1 * base + data2))
 end
 
 func read_uint256_array{range_check_ptr}(

@@ -88,6 +88,44 @@ func testAddPriorityRequest{
 end
 
 @external
+func testCommitBlock{
+    syscall_ptr : felt*,
+    pedersen_ptr : HashBuiltin*,
+    bitwise_ptr : BitwiseBuiltin*,
+    range_check_ptr
+}(size : felt, data_len : felt, data : felt*):
+    alloc_locals
+    local bytes : Bytes = Bytes(
+        _start=0,
+        bytes_per_felt=FELT_MAX_BYTES,
+        size=size,
+        data_length=data_len,
+        data=data
+    )
+    let (offset, local _previousBlock : StoredBlockInfo) = parse_stored_block_info(bytes, 0)
+    let (offset, local _newBlock : CommitBlockInfo) = parse_commit_block_info(bytes, offset)
+    let (offset, local _compressed) = read_felt(bytes, offset, 1)
+    
+    assert _previousBlock.block_number = 0
+    assert _previousBlock.priority_operations = 0
+    assert _previousBlock.pending_onchain_operations_hash = Uint256(0xe500b653ca82273b7bfad8045d85a470, 0xc5d2460186f7233c927e7db2dcc703c0)
+    assert _previousBlock.timestamp = Uint256(0, 0)
+    assert _previousBlock.state_hash = Uint256(0x185240703635b5bbbb94759744d0cb07, 0x16b6dac29128fe56e3755b42f97a0ed4)
+    assert _previousBlock.commitment = Uint256(0, 0)
+    assert _previousBlock.sync_hash = Uint256(0xe500b653ca82273b7bfad8045d85a470, 0xc5d2460186f7233c927e7db2dcc703c0)
+
+    assert _newBlock.new_state_hash = Uint256(0xdd9e948ab3c7bfd9a54fda813e739510, 0x06ef3a22c4ba6c03ed02b3baf5939355)
+    assert _newBlock.timestamp = Uint256(0x00000000000000000000000062a94629, 0)
+    assert _newBlock.block_number = 1
+    assert _newBlock.fee_account = 0
+    assert _newBlock.onchain_operations_size = 1
+    assert _newBlock.onchain_operations[0].public_data_offset = 0
+
+
+    return ()
+end
+
+@external
 func testCommitOneBlock{
     syscall_ptr : felt*,
     pedersen_ptr : HashBuiltin*,
