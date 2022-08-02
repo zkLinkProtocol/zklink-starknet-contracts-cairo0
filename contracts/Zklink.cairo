@@ -20,12 +20,6 @@ from starkware.cairo.common.default_dict import default_dict_new, default_dict_f
 from starkware.cairo.common.dict import dict_write, dict_read, dict_update
 from starkware.cairo.common.dict_access import DictAccess
 from starkware.cairo.common.squash_dict import squash_dict
-
-from openzeppelin.token.erc20.interfaces.IERC20 import IERC20
-from openzeppelin.security.initializable import Initializable
-from openzeppelin.security.reentrancyguard import ReentrancyGuard
-from openzeppelin.upgrades.library import Proxy
-
 from starkware.starknet.common.syscalls import (
     get_block_number,
     get_caller_address,
@@ -34,6 +28,11 @@ from starkware.starknet.common.syscalls import (
     get_contract_address
 )
 
+from openzeppelin.token.erc20.interfaces.IERC20 import IERC20
+from openzeppelin.security.initializable import Initializable
+from openzeppelin.security.reentrancyguard import ReentrancyGuard
+
+from contracts.utils.ProxyLib import Proxy
 from contracts.utils.Bytes import (
     Bytes,
     read_felt,
@@ -400,7 +399,7 @@ func getGovernor{
     pedersen_ptr : HashBuiltin*,
     range_check_ptr
 }() -> (address: felt):
-    let (address) = Proxy.get_admin()
+    let (address) = Proxy.get_governor()
     return (address)
 end
 
@@ -488,9 +487,9 @@ func upgrade{
     syscall_ptr : felt*,
     pedersen_ptr : HashBuiltin*,
     range_check_ptr
-}(new_implementation : felt):
-    Proxy.assert_only_admin()
-    Proxy._set_implementation_hash(new_implementation)
+}(versionId : felt, newImplementation : felt):
+    Proxy.assert_only_governor()
+    Proxy._set_implementation_hash(versionId, newImplementation)
     return ()
 end
 
@@ -1319,17 +1318,16 @@ func changeGovernor{
     bitwise_ptr : BitwiseBuiltin*,
     range_check_ptr
 }(_newGovernor : felt):
-    Proxy.assert_only_admin()
+    Proxy.assert_only_governor()
 
     with_attr error_message("H"):
         assert_not_equal(_newGovernor, 0)
     end
-    let (networkGovernor) = Proxy.get_admin()
+    let (networkGovernor) = Proxy.get_governor()
     if networkGovernor == _newGovernor:
         return ()
     else:
-        Proxy._set_admin(_newGovernor)
-        NewGovernor.emit(_newGovernor)
+        Proxy._set_governor(_newGovernor)
     end
     return ()
 end
@@ -1451,7 +1449,7 @@ func setTokenPaused{
 }(_tokenId : felt, _tokenPaused : felt):
     alloc_locals
     # only governor
-    Proxy.assert_only_admin()
+    Proxy.assert_only_governor()
 
     let (local rt : RegisteredToken) = get_token(_tokenId)
     with_attr error_message("K"):
@@ -1484,7 +1482,7 @@ func setValidator{
     bitwise_ptr : BitwiseBuiltin*,
     range_check_ptr
 }(_validator : felt, _active : felt):
-    Proxy.assert_only_admin()
+    Proxy.assert_only_governor()
 
     let (valid) = get_validator(_validator)
     if valid == _active:
@@ -1505,7 +1503,7 @@ func addBridge{
     bitwise_ptr : BitwiseBuiltin*,
     range_check_ptr
 }(bridge : felt):
-    Proxy.assert_only_admin()
+    Proxy.assert_only_governor()
 
     with_attr error_message("L0"):
         assert_not_zero(bridge)
@@ -1542,7 +1540,7 @@ func updateBridge{
     bitwise_ptr : BitwiseBuiltin*,
     range_check_ptr
 }(index : felt, enableBridgeTo : felt, enableBridgeFrom : felt):
-    Proxy.assert_only_admin()
+    Proxy.assert_only_governor()
 
     with_attr error_message("M"):
         let (len) = get_bridge_length()

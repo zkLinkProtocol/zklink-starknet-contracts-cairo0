@@ -50,6 +50,11 @@ end
 func NewGovernor(newGovernor : felt):
 end
 
+# Upgrade
+@event
+func Upgraded(versionId : felt, implementation: felt):
+end
+
 # Token added to ZkLink net
 @event
 func NewToken(tokenId : felt, token : felt):

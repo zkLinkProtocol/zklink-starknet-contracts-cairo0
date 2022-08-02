@@ -26,7 +26,7 @@ def contract_path(name):
     if name.startswith("tests/"):
         return str(_root / name)
     else:
-        return str(_root / "src" / name)
+        return str(_root / "contracts" / name)
 
 
 def str_to_felt(text):
@@ -113,7 +113,7 @@ def assert_event_emitted(tx_exec_info, from_address, name, data):
 
 def _get_path_from_name(name):
     """Return the contract path by contract name."""
-    dirs = ["src", "tests/mocks"]
+    dirs = ["contracts", "contracts/utils", "tests/mocks"]
     for dir in dirs:
         for (dirpath, _, filenames) in os.walk(dir):
             for file in filenames:
