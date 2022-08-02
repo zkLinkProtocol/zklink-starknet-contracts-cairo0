@@ -16,8 +16,8 @@ func constructor{
     syscall_ptr : felt*,
     pedersen_ptr : HashBuiltin*,
     range_check_ptr
-}(version_id : felt, implementation_hash : felt):
-    Proxy._set_implementation_hash(version_id, implementation_hash)
+}(implementation_hash : felt):
+    Proxy._set_implementation_hash(implementation_hash)
     return ()
 end
 

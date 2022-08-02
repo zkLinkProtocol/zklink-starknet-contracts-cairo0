@@ -52,7 +52,7 @@ end
 
 # Upgrade
 @event
-func Upgraded(versionId : felt, implementation: felt):
+func Upgraded(versionId : felt, implementation : felt):
 end
 
 # Token added to ZkLink net

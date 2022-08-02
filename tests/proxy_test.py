@@ -41,7 +41,7 @@ async def proxy_init(contract_classes):
     )
     proxy = await starknet.deploy(
         contract_class=proxy_cls,
-        constructor_calldata=[1, implementation_decl.class_hash]
+        constructor_calldata=[implementation_decl.class_hash]
     )
     return (
         starknet.state,

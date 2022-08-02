@@ -487,9 +487,9 @@ func upgrade{
     syscall_ptr : felt*,
     pedersen_ptr : HashBuiltin*,
     range_check_ptr
-}(versionId : felt, newImplementation : felt):
+}(newImplementation : felt):
     Proxy.assert_only_governor()
-    Proxy._set_implementation_hash(versionId, newImplementation)
+    Proxy._set_implementation_hash(newImplementation)
     return ()
 end
 
