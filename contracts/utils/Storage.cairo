@@ -397,7 +397,7 @@ func set_token_id{
     syscall_ptr : felt*,
     pedersen_ptr : HashBuiltin*,
     range_check_ptr
-}(token_id : felt, token_address : felt) -> ():
+}(token_address : felt, token_id : felt) -> ():
     token_ids.write(token_address, token_id)
     return ()
 end

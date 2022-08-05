@@ -3,10 +3,12 @@
 from starkware.cairo.common.cairo_builtins import HashBuiltin, BitwiseBuiltin
 from starkware.cairo.common.uint256 import Uint256
 from starkware.cairo.common.dict_access import DictAccess
+from starkware.starknet.common.syscalls import get_block_number
 
 from openzeppelin.upgrades.library import Proxy
 
 from contracts.utils.Storage import (
+    RegisteredToken,
     StoredBlockInfo,
     set_exodusMode,
     set_accept,
@@ -18,7 +20,10 @@ from contracts.utils.Storage import (
     set_totalBlocksProven,
     set_totalOpenPriorityRequests,
     set_synchronizedChains,
-    hashStoredBlockInfo
+    hashStoredBlockInfo,
+    get_pendingBalances,
+    get_token,
+    get_token_id,
 )
 from contracts.utils.Operations import PriorityOperation, Withdraw
 from contracts.Zklink import (
@@ -42,6 +47,46 @@ from contracts.utils.Bytes import (
     read_bytes,
     FELT_MAX_BYTES,
 )
+
+from contracts.Zklink import (
+    initializer,
+    activateExodusMode,
+    performExodus,
+    cancelOutstandingDepositForExodusMode,
+    requestFullExit,
+    depositETH,
+    depositERC20
+)
+
+@view
+func getPendingBalance{
+    syscall_ptr : felt*,
+    pedersen_ptr : HashBuiltin*,
+    range_check_ptr
+}(owner : felt, tokenId : felt) -> (balance : felt):
+    let (balance) = get_pendingBalances((owner, tokenId))
+    return (balance)
+end
+
+@view
+func getToken{
+    syscall_ptr : felt*,
+    pedersen_ptr : HashBuiltin*,
+    range_check_ptr
+}(token_id : felt) -> (token : RegisteredToken):
+    let (token : RegisteredToken) = get_token(token_id)
+    return (token)
+end
+
+@view
+func getTokenId{
+    syscall_ptr : felt*,
+    pedersen_ptr : HashBuiltin*,
+    range_check_ptr
+}(token_address : felt) -> (token_id : felt):
+    let (token_id) = get_token_id(token_address)
+    return (token_id)
+end
 
 @view
 func getPriorityHash{

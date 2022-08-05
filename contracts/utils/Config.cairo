@@ -40,11 +40,11 @@ const CHANGE_PUBKEY_BYTES = OPERATION_CHUNK_SIZE * CHUNK_BYTES
 # Expiration delta for priority request to be satisfied (in seconds)
 # NOTE: Priority expiration should be > (EXPECT_VERIFICATION_IN * BLOCK_PERIOD)
 # otherwise incorrect block with priority op could not be reverted.
-const PRIORITY_EXPIRATION_PERIOD = 1209600  # 14 days
+const PRIORITY_EXPIRATION_PERIOD = 0  # 14 days
 
 # Expiration delta for priority request to be satisfied (in ETH blocks)
 # TODO: It should be a storage_var instead of constant
-const PRIORITY_EXPIRATION = 80640   # PRIORITY_EXPIRATION_PERIOD / BLOCK_PERIOD
+const PRIORITY_EXPIRATION = 0   # PRIORITY_EXPIRATION_PERIOD / BLOCK_PERIOD
 
 # Reserved time for users to send full exit priority operation in case of an upgrade (in seconds)
 const MASS_FULL_EXIT_PERIOD = 432000 # 5 days

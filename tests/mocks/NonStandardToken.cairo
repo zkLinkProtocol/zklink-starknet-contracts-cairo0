@@ -15,6 +15,16 @@ func constructor{
     return ()
 end
 
+@view
+func balanceOf{
+    syscall_ptr : felt*,
+    pedersen_ptr : HashBuiltin*,
+    range_check_ptr
+}(account : felt) -> (balance : Uint256):
+    let (balance : Uint256) = ERC20.balance_of(account)
+    return (balance)
+end
+
 @external
 func mint{
     syscall_ptr : felt*,

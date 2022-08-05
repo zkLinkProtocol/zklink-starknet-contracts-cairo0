@@ -12,6 +12,11 @@ OP_ORDER_MATCHING = 11
 CHUNK_BYTES = 14
 BYTES_PER_FELT = 16
 
+class Token():
+    def __init__(self, tokenId, tokenAddress, mappingToken):
+        self.tokenId = tokenId
+        self.tokenAddress = tokenAddress
+        self.mappingToken = mappingToken
 
 def splitPubData(data):
     return [int.from_bytes(x, 'big') for x in [data[i:i+BYTES_PER_FELT] for i in range(0, len(data), BYTES_PER_FELT)]]
@@ -44,4 +49,11 @@ def getChangePubkeyPubdata(example):
     data = encode_abi_packed(
         ["uint8","uint8","uint32","address","address","uint32"],
         [OP_CHANGE_PUBKEY] + example)
+    return splitPubData(data)
+
+def getBytesArrayData(example):
+    data = encode_abi_packed(
+        ["bytes[]"],
+        [[ x.to_bytes(1, 'big') for x in example]]
+    )
     return splitPubData(data)

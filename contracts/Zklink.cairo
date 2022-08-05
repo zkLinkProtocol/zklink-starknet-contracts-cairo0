@@ -134,6 +134,7 @@ from contracts.utils.Storage import (
     get_totalBlocksProven,
     set_totalBlocksProven,
     get_totalOpenPriorityRequests,
+    set_totalOpenPriorityRequests,
     sub_totalOpenPriorityRequests,
     get_totalCommittedPriorityRequests,
     increase_totalCommittedPriorityRequests,
@@ -531,10 +532,11 @@ func activateExodusMode{
     let (local block_number) = get_block_number()
     let (firstPriorityRequestId) = get_firstPriorityRequestId()
     let (local priorityRequest : PriorityOperation) = get_priorityRequests(firstPriorityRequestId)
-    let (trigger1) = is_le(priorityRequest.expirationBlock, block_number)
+    let (trigger1) = is_le(0, block_number - priorityRequest.expirationBlock)
     let (trigger2) = is_not_zero(priorityRequest.expirationBlock)
     if trigger1 + trigger2 == 2:
         set_exodusMode(1)
+        ExodusMode.emit()
         tempvar syscall_ptr = syscall_ptr
         tempvar pedersen_ptr = pedersen_ptr
         tempvar range_check_ptr = range_check_ptr
@@ -564,29 +566,21 @@ func performExodus{
     pedersen_ptr : HashBuiltin*,
     bitwise_ptr : BitwiseBuiltin*,
     range_check_ptr
-}(data_size : felt, data_len : felt, data : felt*,
-  proof_size : felt, proof_data_len : felt, proof_data : felt*):
+}(
+    _storedBlockInfo : StoredBlockInfo,
+    _owner : felt,
+    _accountId : felt,
+    _subAccountId : felt,
+    _tokenId : felt,
+    _srcTokenId : felt,
+    _amount : felt,
+    proof_size : felt, proof_data_len : felt, proof_data : felt*
+):
     alloc_locals
     # Lock with reentrancy_guard
     ReentrancyGuard._start()
     # not active
     not_active()
-
-    # parse calldata
-    local bytes : Bytes = Bytes(
-        _start=0,
-        bytes_per_felt=FELT_MAX_BYTES,
-        size=data_size,
-        data_length=data_len,
-        data=data
-    )
-    let (offset, local _storedBlockInfo : StoredBlockInfo) = parse_stored_block_info(bytes, 0)
-    let (offset, local _owner) = read_felt(bytes, offset, 20)
-    let (offset, local _accountId) = read_felt(bytes, offset, 4)
-    let (offset, local _subAccountId) = read_felt(bytes, offset, 1)
-    let (offset, local _tokenId) = read_felt(bytes, offset, 2)
-    let (offset, local _srcTokenId) = read_felt(bytes, offset, 2)
-    let (offset, local _amount) = read_felt(bytes, offset, 16)
 
     # Checks
     # performed exodus MUST not be already exited
@@ -1348,6 +1342,7 @@ func addToken{
     _standard : felt,
     _mappingTokenId : felt
 ):
+    Proxy.assert_only_governor()
     # token id MUST be in a valid range
     with_attr error_message("I0"):
         assert_nn(_tokenId - 1)
@@ -1715,6 +1710,7 @@ func add_priority_request{
         pubData=pub_data,
         expirationBlock=expiration_block
     )
+    set_totalOpenPriorityRequests(total_open_priority_requests + 1)
     
     return ()
 end
