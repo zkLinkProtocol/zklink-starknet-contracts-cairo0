@@ -57,6 +57,3 @@ def getBytesArrayData(example):
         [[ x.to_bytes(1, 'big') for x in example]]
     )
     return len(data), splitPubData(data)
-
-def getL2Address(starknet_address):
-    return starknet_address & ((1 << 160) - 1)

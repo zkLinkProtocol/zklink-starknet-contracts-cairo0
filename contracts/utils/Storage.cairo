@@ -9,6 +9,33 @@ from starkware.cairo.common.uint256 import Uint256
 
 from contracts.utils.Operations import PriorityOperation
 from contracts.utils.Bytes import Bytes, read_felt, read_uint256
+from contracts.utils.ProxyLib import Proxy
+
+# ETH_ADDRESS
+@storage_var
+func eth_address() -> (address : felt):
+end
+
+@view
+func get_eth_address{
+    syscall_ptr : felt*,
+    pedersen_ptr : HashBuiltin*,
+    range_check_ptr
+}() -> (address : felt):
+    let (address) = eth_address.read()
+    return (address)
+end
+
+@external
+func set_eth_address{
+    syscall_ptr : felt*,
+    pedersen_ptr : HashBuiltin*,
+    range_check_ptr
+}(address : felt):
+    Proxy.assert_only_governor()
+    eth_address.write(address)
+    return ()
+end
 
 # Total number of executed blocks i.e. blocks[totalBlocksExecuted] points at the latest executed block (block 0 is genesis)
 @storage_var
@@ -823,7 +850,7 @@ func hashStoredBlockInfo{
     range_check_ptr
 }(_storedBlockInfo : StoredBlockInfo) -> (hash : Uint256):
     # TODO : keccak
-    return (Uint256(0, 0))
+    return (Uint256(_storedBlockInfo.block_number, 0))
 end
 
 func increaseBalanceToWithdraw{

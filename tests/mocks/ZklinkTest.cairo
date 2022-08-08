@@ -16,7 +16,9 @@ from contracts.utils.Storage import (
     get_authFacts,
     get_priorityRequests,
     set_storedBlockHashes,
+    get_storedBlockHashes,
     set_totalBlocksExecuted,
+    get_totalBlocksExecuted,
     set_totalBlocksProven,
     set_totalOpenPriorityRequests,
     set_synchronizedChains,
@@ -59,12 +61,22 @@ from contracts.Zklink import (
 )
 
 @view
-func getBlockNumber{
+func getstoredBlockHashes{
+    syscall_ptr : felt*,
+    pedersen_ptr : HashBuiltin*,
+    range_check_ptr
+}(block : felt) -> (hash : Uint256):
+    let (hash : Uint256) = get_storedBlockHashes(block)
+    return (hash)
+end
+
+@view
+func gettotalBlocksExecuted{
     syscall_ptr : felt*,
     pedersen_ptr : HashBuiltin*,
     range_check_ptr
 }() -> (block_number : felt):
-    let (block_number) = get_block_number()
+    let (block_number) = get_totalBlocksExecuted()
     return (block_number)
 end
 

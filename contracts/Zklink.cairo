@@ -83,7 +83,6 @@ from contracts.utils.Utils import (
 from contracts.utils.Config import (
     EMPTY_STRING_KECCAK_LOW,
     EMPTY_STRING_KECCAK_HIGH,
-    ETH_ADDRESS,
     EXODUS_MODE_ON,
     MAX_PRIORITY_REQUESTS,
     MAX_DEPOSIT_AMOUNT,
@@ -114,6 +113,7 @@ from contracts.utils.Config import (
 )
 
 from contracts.utils.Storage import (
+    get_eth_address,
     get_totalBlocksExecuted,
     set_totalBlocksExecuted,
     increase_totalBlocksExecuted,
@@ -594,7 +594,7 @@ func performExodus{
         assert valid = 0
     end
     # incorrect stored block info
-        with_attr error_message("y1"):
+    with_attr error_message("y1"):
         let (totalBlocksExecuted) = get_totalBlocksExecuted()
         let (hash1 : Uint256) = get_storedBlockHashes(totalBlocksExecuted)
         let (hash2 : Uint256) = hashStoredBlockInfo(_storedBlockInfo)
@@ -766,9 +766,10 @@ func depositETH{
     # Lock with reentrancy_guard
     ReentrancyGuard._start()
     
+    let (eth_address) = get_eth_address()
     # deposit
     deposit(
-        _tokenAddress=ETH_ADDRESS,
+        _tokenAddress=eth_address,
         _amount=_amount,
         _zkLinkAddress=_zkLinkAddress,
         _subAccountId=_subAccountId,

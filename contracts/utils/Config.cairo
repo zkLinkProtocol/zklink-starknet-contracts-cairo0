@@ -97,11 +97,6 @@ const ALL_CHAINS = 31
 # Chain index, CHAIN_ID is non-zero value
 const CHAIN_INDEX = 31
 
-# Address represent eth when deposit or withdraw
-# TODO: It should be a storage_var instead of constant
-# Because of ETH address is different between testnet and mainnet
-const ETH_ADDRESS = 0x49d36570d4e46f48e99674bd3fcc84644ddd6b96f7c741b1562b82f9e004dc7
-
 # When set fee = 100, it means 1%
 const MAX_ACCEPT_FEE_RATE = 10000
 
