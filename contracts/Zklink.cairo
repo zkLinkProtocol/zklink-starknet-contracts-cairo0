@@ -4,9 +4,14 @@
 from starkware.cairo.common.cairo_keccak.keccak import finalize_keccak, keccak
 from starkware.cairo.common.alloc import alloc
 from starkware.cairo.common.uint256 import (
-    Uint256, uint256_sub, uint256_eq,
-    uint256_le, uint256_and, uint256_or,
-    uint256_not, uint256_lt
+    Uint256,
+    uint256_sub,
+    uint256_eq,
+    uint256_lt,
+    uint256_le,
+    uint256_and,
+    uint256_or,
+    uint256_not
 )
 from starkware.cairo.common.bitwise import bitwise_and, bitwise_or
 from starkware.cairo.common.cairo_builtins import (
@@ -50,8 +55,8 @@ from contracts.utils.Operations import (
     PriorityOperation,
     DepositOperation,
     FullExit,
-    convert_deposit_operation_to_array,
-    convert_fullexit_operation_to_array,
+    writeDepositPubdataForPriorityQueue,
+    writeFullExitPubdataForPriorityQueue,
     read_deposit_pubdata,
     check_deposit_with_priority_operation,
     read_fullexit_pubdata,
@@ -65,10 +70,10 @@ from contracts.utils.Operations import (
 )
 
 from contracts.utils.Utils import (
-    hash_array_to_uint160,
     hash_array_to_uint256,
     felt_to_uint256,
     uint256_to_felt,
+    address_to_felt,
     min_felt,
     concat_hash,
     concat_two_hash,
@@ -641,6 +646,12 @@ func cancelOutstandingDepositForExodusMode{
     # not active
     not_active()
 
+    # Checks
+    let (totalOpenPriorityRequests) = get_totalOpenPriorityRequests()
+    let (local toProcess) = min_felt(totalOpenPriorityRequests, 1)
+    with_attr error_message("A0"):
+        assert_lt(0, toProcess)
+    end
     # Effects
     let (local id) = get_firstPriorityRequestId()
     let (pr : PriorityOperation) = get_priorityRequests(id)
@@ -658,7 +669,8 @@ func cancelOutstandingDepositForExodusMode{
         end
 
         let (op : DepositOperation) = read_deposit_pubdata(bytes)
-        increaseBalanceToWithdraw((op.owner, op.token_id), op.amount)
+        let (owner) = address_to_felt(op.owner)
+        increaseBalanceToWithdraw((owner, op.token_id), op.amount)
         tempvar syscall_ptr = syscall_ptr
         tempvar pedersen_ptr = pedersen_ptr
         tempvar bitwise_ptr = bitwise_ptr
@@ -671,8 +683,8 @@ func cancelOutstandingDepositForExodusMode{
     end
 
     delete_priorityRequests(id)
-    increase_firstPriorityRequestId(1)
-    sub_totalOpenPriorityRequests(1)
+    increase_firstPriorityRequestId(toProcess)
+    sub_totalOpenPriorityRequests(toProcess)
     # Unlock
     ReentrancyGuard._end()
     return ()
@@ -750,7 +762,7 @@ func depositETH{
     pedersen_ptr : HashBuiltin*,
     bitwise_ptr : BitwiseBuiltin*,
     range_check_ptr
-}(_zkLinkAddress : felt, _subAccountId : felt, _amount : felt):
+}(_zkLinkAddress : Uint256, _subAccountId : felt, _amount : felt):
     # Lock with reentrancy_guard
     ReentrancyGuard._start()
     
@@ -777,7 +789,7 @@ func depositERC20{
     pedersen_ptr : HashBuiltin*,
     bitwise_ptr : BitwiseBuiltin*,
     range_check_ptr
-}(_tokenAddress : felt, _amount : felt, _zkLinkAddress : felt, _subAccountId : felt, _mapping : felt):
+}(_tokenAddress : felt, _amount : felt, _zkLinkAddress : Uint256, _subAccountId : felt, _mapping : felt):
     # Lock with reentrancy_guard
     ReentrancyGuard._start()
     # support non-standard tokens
@@ -825,7 +837,7 @@ func requestFullExit{
     pedersen_ptr : HashBuiltin*,
     bitwise_ptr : BitwiseBuiltin*,
     range_check_ptr
-}(_accountId : felt, _subAccountId : felt, _tokenId : felt, _mapping : felt):
+}(_address : Uint256, _accountId : felt, _subAccountId : felt, _tokenId : felt, _mapping : felt):
     alloc_locals
     # Lock with reentrancy_guard
     ReentrancyGuard._start()
@@ -863,13 +875,20 @@ func requestFullExit{
     # Effects
     # Priority Queue request
     let (chain_id) = get_chain_id()
-    let (sender) = get_caller_address()
+
+    # sender should same with _address
+    with_attr error_message("a5"):
+        let (sender) = get_caller_address()
+        let (address) = address_to_felt(_address)
+        assert address = sender
+    end
+    
     if _mapping == 1:
         tempvar op = FullExit(
             chainId=chain_id,
             accountId=_accountId,
             subAccountId=_subAccountId,
-            owner=sender,   # Only the owner of account can fullExit for them self
+            owner=_address,   # Only the owner of account can fullExit for them self
             tokenId=_tokenId,
             srcTokenId = rt.mappingTokenId,
             amount=0    # unknown at this point
@@ -879,14 +898,14 @@ func requestFullExit{
             chainId=chain_id,
             accountId=_accountId,
             subAccountId=_subAccountId,
-            owner=sender,   # Only the owner of account can fullExit for them self
+            owner=_address,   # Only the owner of account can fullExit for them self
             tokenId=_tokenId,
             srcTokenId=_tokenId,
             amount=0    # unknown at this point
         )
     end
-    let (num, pub_data) = convert_fullexit_operation_to_array(op)
-    add_priority_request(op_type=OpType.FullExit, pub_data=pub_data, n_elements=num)
+    let (pubdata : Bytes) = writeFullExitPubdataForPriorityQueue(op)
+    add_priority_request(OpType.FullExit, pubdata)
     # Unlock
     ReentrancyGuard._end()
     return ()
@@ -1598,7 +1617,7 @@ func deposit{
     pedersen_ptr : HashBuiltin*,
     bitwise_ptr : BitwiseBuiltin*,
     range_check_ptr
-}(_tokenAddress : felt, _amount : felt, _zkLinkAddress : felt, _subAccountId : felt, _mapping : felt):
+}(_tokenAddress : felt, _amount : felt, _zkLinkAddress : Uint256, _subAccountId : felt, _mapping : felt):
     alloc_locals
     active()
 
@@ -1610,7 +1629,8 @@ func deposit{
     end
 
     with_attr error_message("e1"):
-        assert_not_zero(_zkLinkAddress)
+        assert_not_zero(_zkLinkAddress.high)
+        assert_not_zero(_zkLinkAddress.low)
     end
 
     # sub account id must be valid
@@ -1669,8 +1689,8 @@ func deposit{
         )
     end
 
-    let (num, pub_data) = convert_deposit_operation_to_array(op)
-    add_priority_request(op_type=OpType.Deposit, pub_data=pub_data, n_elements=num)
+    let (pubdata : Bytes) = writeDepositPubdataForPriorityQueue(op)
+    add_priority_request(OpType.Deposit, pubdata)
 
     return ()
 end
@@ -1680,7 +1700,7 @@ func add_priority_request{
     pedersen_ptr : HashBuiltin*,
     bitwise_ptr : BitwiseBuiltin*,
     range_check_ptr
-}(op_type : felt, pub_data : felt*, n_elements : felt):
+}(op_type : felt, pubData : Bytes):
     alloc_locals
     # Expiration block is: current block number + priority expiration delta, overflow is impossible
     let (block_number) = get_block_number()
@@ -1691,7 +1711,7 @@ func add_priority_request{
     let (total_open_priority_requests) = get_totalOpenPriorityRequests()
     let next_priority_request_id = first_priority_request_id + total_open_priority_requests
 
-    let (hashedPubData) = hash_array_to_uint160(n_elements, pub_data)
+    let (hashedPubData) = hashBytesToBytes20(pubData)
 
     let op = PriorityOperation(
         hashedPubData=hashedPubData,
@@ -1706,8 +1726,8 @@ func add_priority_request{
         sender=sender,
         serialId=next_priority_request_id,
         opType=op_type,
-        pubData_len=n_elements,
-        pubData=pub_data,
+        pubData_len=pubData.data_length,
+        pubData=pubData.data,
         expirationBlock=expiration_block
     )
     set_totalOpenPriorityRequests(total_open_priority_requests + 1)
@@ -2271,13 +2291,14 @@ func _executeOneBlock{
         else:
             if op_type == OpType.FullExit:
                 let (fullexit : FullExit) = read_fullexit_pubdata(pubData)
-                withdrawOrStore(fullexit.tokenId, fullexit.owner, fullexit.amount)
+                let (owner) = address_to_felt(fullexit.owner)
+                withdrawOrStore(fullexit.tokenId, owner, fullexit.amount)
                 tempvar syscall_ptr = syscall_ptr
                 tempvar pedersen_ptr = pedersen_ptr
                 tempvar bitwise_ptr = bitwise_ptr
                 tempvar range_check_ptr = range_check_ptr
             else:
-                # revert?
+                # TODO : revert?
                 tempvar syscall_ptr = syscall_ptr
                 tempvar pedersen_ptr = pedersen_ptr
                 tempvar bitwise_ptr = bitwise_ptr

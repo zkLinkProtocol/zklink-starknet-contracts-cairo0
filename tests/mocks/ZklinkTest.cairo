@@ -59,6 +59,16 @@ from contracts.Zklink import (
 )
 
 @view
+func getBlockNumber{
+    syscall_ptr : felt*,
+    pedersen_ptr : HashBuiltin*,
+    range_check_ptr
+}() -> (block_number : felt):
+    let (block_number) = get_block_number()
+    return (block_number)
+end
+
+@view
 func getPendingBalance{
     syscall_ptr : felt*,
     pedersen_ptr : HashBuiltin*,
@@ -127,8 +137,16 @@ func testAddPriorityRequest{
     pedersen_ptr : HashBuiltin*,
     bitwise_ptr : BitwiseBuiltin*,
     range_check_ptr
-}(_opType : felt, _pubData_len : felt, _pubData : felt*):
-    add_priority_request(_opType, _pubData, _pubData_len)
+}(_opType : felt, size : felt, data_len : felt, data : felt*):
+    alloc_locals
+    local bytes : Bytes = Bytes(
+        _start=0,
+        bytes_per_felt=FELT_MAX_BYTES,
+        size=size,
+        data_length=data_len,
+        data=data
+    )
+    add_priority_request(_opType, bytes)
     return ()
 end
 

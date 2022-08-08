@@ -23,37 +23,40 @@ def splitPubData(data):
 
 def getDepositPubdata(example):
     data = encode_abi_packed(
-        ["uint8","uint8","uint32","uint8","uint16","uint16","uint128","address"],
+        ["uint8","uint8","uint32","uint8","uint16","uint16","uint128","uint256"],
         [OP_DEPOSIT] + example)
-    return splitPubData(data)
+    return len(data), splitPubData(data)
 
 def getWithdrawPubdata(example):
     data = encode_abi_packed(
-        ["uint8","uint8","uint32","uint16","uint128","address","uint32","uint16"],
+        ["uint8","uint8","uint32","uint16","uint128","uint256","uint32","uint16"],
         [OP_WITHDRAW] + example)
-    return splitPubData(data)
+    return len(data), splitPubData(data)
 
 def getFullExitPubdata(example):
     data = encode_abi_packed(
-        ["uint8","uint8","uint32","uint8","address","uint16","uint16","uint128"],
+        ["uint8","uint8","uint32","uint8","uint256","uint16","uint16","uint128"],
         [OP_FULL_EXIT] + example)
-    return splitPubData(data)
+    return len(data), splitPubData(data)
 
 def getForcedExitPubdata(example):
     data = encode_abi_packed(
-        ["uint8","uint8","uint16","uint128","address"],
+        ["uint8","uint8","uint16","uint128","uint256"],
         [OP_FORCE_EXIT] + example)
-    return splitPubData(data)
+    return len(data), splitPubData(data)
 
 def getChangePubkeyPubdata(example):
     data = encode_abi_packed(
-        ["uint8","uint8","uint32","address","address","uint32"],
+        ["uint8","uint8","uint32","address","uint256","uint32"],
         [OP_CHANGE_PUBKEY] + example)
-    return splitPubData(data)
+    return len(data), splitPubData(data)
 
 def getBytesArrayData(example):
     data = encode_abi_packed(
         ["bytes[]"],
         [[ x.to_bytes(1, 'big') for x in example]]
     )
-    return splitPubData(data)
+    return len(data), splitPubData(data)
+
+def getL2Address(starknet_address):
+    return starknet_address & ((1 << 160) - 1)

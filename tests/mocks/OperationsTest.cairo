@@ -76,7 +76,7 @@ func testWriteDepositPubdata{
         assert _example.chain_id = parsed.chain_id
     end
     with_attr error_message("aok"):
-        assert _example.account_id = parsed.account_id
+        assert 0 = parsed.account_id
     end
     with_attr error_message("sok"):
         assert _example.sub_account_id = parsed.sub_account_id
@@ -209,7 +209,7 @@ func testWriteFullExitPubdata{
         assert _example.srcTokenId = parsed.srcTokenId
     end
     with_attr error_message("amn"):
-        assert _example.amount = parsed.amount
+        assert 0 = parsed.amount
     end
     return ()
 end

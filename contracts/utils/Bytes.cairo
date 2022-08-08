@@ -260,6 +260,14 @@ func read_bytes{range_check_ptr}(
     end
 end
 
+func read_address{range_check_ptr}(
+    bytes : Bytes,
+    offset : felt
+) -> (new_offset : felt, res : felt):
+    let (new_offset, data : Uint256) = read_uint256(bytes, offset)
+    return (new_offset, data.high * 2**128 + data.low)
+end
+
 func create_empty_bytes() -> (bytes : Bytes):
     let (empty_data : felt*) = alloc()
     assert empty_data[0] = 0

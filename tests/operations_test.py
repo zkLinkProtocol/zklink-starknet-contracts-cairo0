@@ -6,7 +6,7 @@ from starkware.starknet.testing.starknet import Starknet
 from starkware.starknet.testing.contract import StarknetContract
 
 from signers import MockSigner
-from utils import get_contract_class, cached_contract, assert_revert
+from utils import get_contract_class, to_uint
 from zklink_utils import (
     getDepositPubdata, getWithdrawPubdata, getFullExitPubdata,
     getForcedExitPubdata, getChangePubkeyPubdata
@@ -42,78 +42,67 @@ def str_to_felt(owner):
 
 @pytest.mark.asyncio
 async def test_testDepositPubdata(contract_factory):
-    starknet, account, contract = contract_factory
+    _, account, contract = contract_factory
     
-    owner = '0x823B747710C5bC9b8A47243f2c3d1805F1aA00c5'
-    example = [1, 13, 0, 25, 23, 100, owner]
-    pubdata = getDepositPubdata(example)
+    example = [1, 13, 0, 25, 23, 100, account.contract_address]
+    pubdata_len, pubdata = getDepositPubdata(example)
     
-    contract_example = (1, 13, 0, 25, 23, 100, str_to_felt(owner))
-    await contract.testDepositPubdata(contract_example, 47, pubdata).invoke()
+    contract_example = (1, 13, 0, 25, 23, 100, to_uint(account.contract_address))
+    await contract.testDepositPubdata(contract_example, pubdata_len, pubdata).invoke()
     
 @pytest.mark.asyncio
 async def test_testWriteDepositPubdata(contract_factory):
-    starknet, account, contract = contract_factory
+    _, account, contract = contract_factory
     
-    owner = '0x823B747710C5bC9b8A47243f2c3d1805F1aA00c5'
-    example = [1, 13, 0, 25, 23, 100, owner]
-    
-    contract_example = (1, 13, 0, 25, 23, 100, str_to_felt(owner))
+    # ignore accountId
+    contract_example = (1, 13, 0, 25, 23, 100, to_uint(account.contract_address))
     await contract.testWriteDepositPubdata(contract_example).invoke()
     
 @pytest.mark.asyncio
 async def test_testWithdrawPubdata(contract_factory):
-    starknet, account, contract = contract_factory
+    _, account, contract = contract_factory
     
-    owner = '0x823B747710C5bC9b8A47243f2c3d1805F1aA00c5'
-    example = [1, 32, 34, 32, owner, 45, 45]
-    pubdata = getWithdrawPubdata(example)
+    example = [1, 32, 34, 32, account.contract_address, 45, 45]
+    pubdata_len, pubdata = getWithdrawPubdata(example)
     
-    contract_example = (1, 32, 34, 32, str_to_felt(owner), 45, 45)
-    await contract.testWithdrawPubdata(contract_example, 50, pubdata).invoke()
+    contract_example = (1, 32, 34, 32, account.contract_address, 45, 45)
+    await contract.testWithdrawPubdata(contract_example, pubdata_len, pubdata).invoke()
     
 @pytest.mark.asyncio
 async def test_testFullExitPubdata(contract_factory):
-    starknet, account, contract = contract_factory
+    _, account, contract = contract_factory
     
-    owner = '0x823B747710C5bC9b8A47243f2c3d1805F1aA00c5'
-    example = [1, 34, 23, owner, 2, 1, 15]
-    pubdata = getFullExitPubdata(example)
+    example = [1, 34, 23, account.contract_address, 2, 1, 15]
+    pubdata_len, pubdata = getFullExitPubdata(example)
     
-    contract_example = (1, 34, 23, str_to_felt(owner), 2, 1, 15)
-    await contract.testFullExitPubdata(contract_example, 47, pubdata).invoke()
+    contract_example = (1, 34, 23, to_uint(account.contract_address), 2, 1, 15)
+    await contract.testFullExitPubdata(contract_example, pubdata_len, pubdata).invoke()
     
 @pytest.mark.asyncio
 async def test_testWriteFullExitPubdata(contract_factory):
-    starknet, account, contract = contract_factory
+    _, account, contract = contract_factory
     
-    owner = '0x823B747710C5bC9b8A47243f2c3d1805F1aA00c5'
-    example = [1, 34, 23, owner, 2, 1, 15]
-    pubdata = getFullExitPubdata(example)
-    
-    contract_example = (1, 34, 23, str_to_felt(owner), 2, 1, 15)
+    contract_example = (1, 34, 23, to_uint(account.contract_address), 2, 1, 15)
     await contract.testWriteFullExitPubdata(contract_example).invoke()
     
 @pytest.mark.asyncio
 async def test_testForcedExitPubdata(contract_factory):
-    starknet, account, contract = contract_factory
+    _, account, contract = contract_factory
     
-    owner = '0x823B747710C5bC9b8A47243f2c3d1805F1aA00c5'
-    example = [1, 5, 6, owner]
-    pubdata = getForcedExitPubdata(example)
+    example = [1, 5, 6, account.contract_address]
+    pubdata_len, pubdata = getForcedExitPubdata(example)
     
-    contract_example = (1, 5, 6, str_to_felt(owner))
-    await contract.testForcedExitPubdata(contract_example, 40, pubdata).invoke()
+    contract_example = (1, 5, 6, account.contract_address)
+    await contract.testForcedExitPubdata(contract_example, pubdata_len, pubdata).invoke()
     
 @pytest.mark.asyncio
 async def test_testChangePubkeyPubdata(contract_factory):
-    starknet, account, contract = contract_factory
+    _, account, contract = contract_factory
     
     pubKeyHash = '0x823B747710C5bC9b8A47243f2c3d1805F1aA00c5'
-    owner = '0x823B747710C5bC9b8A47243f2c3d1805F1aA00c5'
     
-    example = [1, 2, pubKeyHash, owner, 3]
-    pubdata = getChangePubkeyPubdata(example)
+    example = [1, 2, pubKeyHash, account.contract_address, 3]
+    pubdata_len, pubdata = getChangePubkeyPubdata(example)
     
-    contract_example = (1, 2, str_to_felt(pubKeyHash), str_to_felt(owner), 3)
-    await contract.testChangePubkeyPubdata(contract_example, 50, pubdata).invoke()
+    contract_example = (1, 2, str_to_felt(pubKeyHash), account.contract_address, 3)
+    await contract.testChangePubkeyPubdata(contract_example, pubdata_len, pubdata).invoke()

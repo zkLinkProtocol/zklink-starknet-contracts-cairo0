@@ -6,8 +6,8 @@ from starkware.cairo.common.cairo_builtins import BitwiseBuiltin
 from starkware.cairo.common.math import unsigned_div_rem
 from starkware.cairo.common.pow import pow
 from starkware.cairo.common.uint256 import Uint256, uint256_eq
-from contracts.utils.Utils import hash_array_to_uint160
-from contracts.utils.Bytes import Bytes, read_felt, join_bytes, FELT_MAX_BYTES
+from contracts.utils.Utils import hashBytesToBytes20, deserialize_address
+from contracts.utils.Bytes import Bytes, read_felt, read_uint256, join_bytes, FELT_MAX_BYTES, read_address
 
 # ZKLink circuit operation type
 struct OpType:
@@ -29,7 +29,7 @@ const OP_TYPE_BYTES = 1         # op is uint8
 const CHAIN_BYTES = 1           # chainId is uint8
 const TOKEN_BYTES = 2           # token is uint16
 const NONCE_BYTES = 4           # nonce is uint32
-const ADDRESS_BYTES = 20        # L2 address is 20 bytes length
+const ADDRESS_BYTES = 32        # L2 address is 20 bytes length
 const FEE_BYTES = 2             # fee is uint16
 const ACCOUNT_ID_BYTES = 4      # accountId is uint32
 const SUB_ACCOUNT_ID_BYTES = 1  # subAccountId is uint8
@@ -38,22 +38,22 @@ const AMOUNT_BYTES = 16         # amount is uint128
 # Priority operations: Deposit, FullExit
 struct PriorityOperation:
     member hashedPubData : felt    # hashed priority operation public data
-    member expirationBlock : felt      # expiration block number (ETH block) for this request (must be satisfied before)
-    member opType : felt               # priority operation type
+    member expirationBlock : felt  # expiration block number (ETH block) for this request (must be satisfied before)
+    member opType : felt           # priority operation type
 end
 
 # Deposit Operation
 struct DepositOperation:
-    member chain_id : felt      # deposit from which chain that identified by l2 chain id
-    member account_id : felt    # the account id bound to the owner address, ignored at serialization and will be set when the block is submitted
-    member sub_account_id : felt # the sub account is bound to account, default value is 0(the global public sub account)
-    member token_id : felt      # the token that registered to l2
-    member target_token_id : felt # the token that user increased in l2
-    member amount : felt        # the token amount deposited to l2
-    member owner : felt       # the address that receive deposited token at l2
+    member chain_id : felt          # deposit from which chain that identified by l2 chain id
+    member account_id : felt        # the account id bound to the owner address, ignored at serialization and will be set when the block is submitted
+    member sub_account_id : felt    # the sub account is bound to account, default value is 0(the global public sub account)
+    member token_id : felt          # the token that registered to l2
+    member target_token_id : felt   # the token that user increased in l2
+    member amount : felt            # the token amount deposited to l2
+    member owner : Uint256          # the address that receive deposited token at l2
 end
 
-# 47 bytes
+# 59 bytes
 const PACKED_DEPOSIT_PUBDATA_BYTES = OP_TYPE_BYTES + CHAIN_BYTES + ACCOUNT_ID_BYTES + SUB_ACCOUNT_ID_BYTES + TOKEN_BYTES * 2 + AMOUNT_BYTES + ADDRESS_BYTES
 
 # Deserialize deposit pubdata
@@ -65,7 +65,7 @@ func read_deposit_pubdata{range_check_ptr}(op_pubdata : Bytes) -> (parsed : Depo
     let (offset, local token_id) = read_felt(op_pubdata, offset, TOKEN_BYTES)
     let (offset, local target_token_id) = read_felt(op_pubdata, offset, TOKEN_BYTES)
     let (offset, local amount) = read_felt(op_pubdata, offset, AMOUNT_BYTES)
-    let (offset, local owner) = read_felt(op_pubdata, offset, ADDRESS_BYTES)
+    let (offset, local owner) = read_uint256(op_pubdata, offset)
 
     let parsed = DepositOperation(
         chain_id=chain_id,
@@ -79,21 +79,6 @@ func read_deposit_pubdata{range_check_ptr}(op_pubdata : Bytes) -> (parsed : Depo
     return (parsed)
 end
 
-func convert_deposit_operation_to_array(op : DepositOperation) -> (n_elements : felt, elements : felt*):
-    alloc_locals
-    local op_array : felt*
-    let (local op_array : felt*) = alloc()
-
-    assert op_array[0] = op.chain_id
-    assert op_array[1] = op.account_id
-    assert op_array[2] = op.sub_account_id
-    assert op_array[3] = op.token_id
-    assert op_array[4] = op.amount
-    assert op_array[5] = op.owner
-
-    return (n_elements=6, elements=op_array)
-end
-
 func writeDepositPubdataForPriorityQueue{range_check_ptr}(op : DepositOperation) -> (bytes : Bytes):
     alloc_locals
     let (local data : felt*) = alloc()
@@ -101,8 +86,7 @@ func writeDepositPubdataForPriorityQueue{range_check_ptr}(op : DepositOperation)
     let (amount_div) = pow(256, 11)
     let (local amount1, local amount2) = unsigned_div_rem(op.amount, amount_div)
 
-    let (owner_div) = pow(256, 15)
-    let (local owner1, local owner2) = unsigned_div_rem(op.owner, owner_div)
+    let (_, deowner : felt*) = deserialize_address(op.owner, 5, 16, 11)
     # bytes of DepositOperation member
     # op_type :         1
     # chain_id :        1
@@ -111,26 +95,28 @@ func writeDepositPubdataForPriorityQueue{range_check_ptr}(op : DepositOperation)
     # token_id :        2
     # target_token_id : 2
     # amount :          16
-    # owner :           20
+    # owner :           32
     # data[0] = op_type + chain_id + account_id + sub_account_id + token_id + target_token_id + amount(5 bytes)
     let (value) = join_bytes(OpType.Deposit, op.chain_id, 1)
-    let (value) = join_bytes(value, op.account_id, 4)
+    let (value) = join_bytes(value, 0, 4)   # accountId (ignored during hash calculation)
     let (value) = join_bytes(value, op.sub_account_id, 1)
     let (value) = join_bytes(value, op.token_id, 2)
     let (value) = join_bytes(value, op.target_token_id, 2)
     let (value) = join_bytes(value, amount1, 5)
     assert data[0] = value
     # data[1] = amount(11 bytes) + owner(5 bytes)
-    let (value) = join_bytes(amount2, owner1, 5)
+    let (value) = join_bytes(amount2, deowner[0], 5)
     assert data[1] = value
-    # data[2] = owner(15 bytes)
-    assert data[2] = owner2
+    # data[2] = owner(16 bytes)
+    assert data[2] = deowner[1]
+    # data[3] = owner(11 bytes)
+    assert data[3] = deowner[2]
 
     return (Bytes(
         _start=0,
         bytes_per_felt=FELT_MAX_BYTES,
         size=PACKED_DEPOSIT_PUBDATA_BYTES,
-        data_length=3,
+        data_length=4,
         data=data
     ))
 end
@@ -144,19 +130,21 @@ func check_deposit_with_priority_operation{
         assert _priority_op.opType = OpType.Deposit
     end
     with_attr error_message("OP: invalid deposit hash"):
-        let (num, pub_data) = convert_deposit_operation_to_array(_deposit)
-        let (hashed_pub_data) = hash_array_to_uint160(num, pub_data)
+        let (pubdata : Bytes) = writeDepositPubdataForPriorityQueue(_deposit)
+        let (hashed_pub_data) = hashBytesToBytes20(pubdata)
         assert hashed_pub_data = _priority_op.hashedPubData
     end
     return ()
 end
+
+const PACKED_FULLEXIT_PUBDATA_BYTES = OP_TYPE_BYTES + CHAIN_BYTES + ACCOUNT_ID_BYTES + SUB_ACCOUNT_ID_BYTES + TOKEN_BYTES * 2 + AMOUNT_BYTES + ADDRESS_BYTES
 
 # FullExit Operation
 struct FullExit:
     member chainId : felt       # uint8, withdraw to which chain that identified by l2 chain id
     member accountId : felt     # uint32, the account id to withdraw from
     member subAccountId : felt  # uint8, the sub account is bound to account, default value is 0(the global public sub account)
-    member owner : felt         # 20 bytes, the address that own the account at l2
+    member owner : Uint256      # 32 bytes, the address that own the account at l2
     member tokenId : felt       # uint16, the token that registered to l2
     member srcTokenId : felt    # uint16, the token that decreased in l2
     member amount : felt        # uint128, the token amount that fully withdrawn to owner, ignored at serialization and will be set when the block is submitted
@@ -168,7 +156,7 @@ func read_fullexit_pubdata{range_check_ptr}(op_pubdata : Bytes) -> (parsed : Ful
     let (offset, local chainId) = read_felt(op_pubdata, OP_TYPE_BYTES, CHAIN_BYTES)
     let (offset, local accountId) = read_felt(op_pubdata, offset, ACCOUNT_ID_BYTES)
     let (offset, local subAccountId) = read_felt(op_pubdata, offset, SUB_ACCOUNT_ID_BYTES)
-    let (offset, local owner) = read_felt(op_pubdata, offset, ADDRESS_BYTES)
+    let (offset, local owner) = read_uint256(op_pubdata, offset)
     let (offset, local tokenId) = read_felt(op_pubdata, offset, TOKEN_BYTES)
     let (offset, local srcTokenId) = read_felt(op_pubdata, offset, TOKEN_BYTES)
     let (offset, local amount) = read_felt(op_pubdata, offset, AMOUNT_BYTES)
@@ -194,65 +182,50 @@ func check_fullexit_with_priority_operation{
         assert _priority_op.opType = OpType.FullExit
     end
     with_attr error_message("OP: invalid deposit hash"):
-        let (num, pub_data) = convert_fullexit_operation_to_array(_fullexit)
-        let (hashed_pub_data) = hash_array_to_uint160(num, pub_data)
+        let (pubdata : Bytes) = writeFullExitPubdataForPriorityQueue(_fullexit)
+        let (hashed_pub_data) = hashBytesToBytes20(pubdata)
         assert hashed_pub_data = _priority_op.hashedPubData
     end
     return ()
-end
-
-func convert_fullexit_operation_to_array(op : FullExit) -> (n_elements : felt, elements : felt*):
-    alloc_locals
-    local op_array : felt*
-    let (local op_array : felt*) = alloc()
-
-    assert op_array[0] = op.chainId
-    assert op_array[1] = op.accountId
-    assert op_array[2] = op.subAccountId
-    assert op_array[3] = op.owner
-    assert op_array[4] = op.tokenId
-    assert op_array[5] = op.amount
-
-    return (n_elements=6, elements=op_array)
 end
 
 func writeFullExitPubdataForPriorityQueue{range_check_ptr}(op : FullExit) -> (bytes : Bytes):
     alloc_locals
     let (local data : felt*) = alloc()
 
-    let (owner_div) = pow(256, 11)
-    let (local owner1, local owner2) = unsigned_div_rem(op.owner, owner_div)
+    # amount(ignored during hash calculation)
+    let (_, deowner) = deserialize_address(op.owner, 9, 16, 7)
 
-    let (amount_div) = pow(256, 15)
-    let (local amount1, local amount2) = unsigned_div_rem(op.amount, amount_div)
     # bytes of DepositOperation member
     # op_type :         1
     # chainId :         1
     # accountId :       4
     # subAccountId :    1
-    # owner :           20
+    # owner :           32
     # tokenId :         2
     # srcTokenId :      2    
     # amount :          16
     # data[0] = op_type + chain_id + account_id + sub_account_id + owner(9 bytes)
-    let (value) = join_bytes(OpType.Deposit, op.chainId, 1)
+    let (value) = join_bytes(OpType.FullExit, op.chainId, 1)
     let (value) = join_bytes(value, op.accountId, 4)
     let (value) = join_bytes(value, op.subAccountId, 1)
-    let (value) = join_bytes(value, owner1, 9)
+    let (value) = join_bytes(value, deowner[0], 9)
     assert data[0] = value
-    # data[1] = owner(11 bytes) + tokenId + srcTokenId + amount(1 bytes)
-    let (value) = join_bytes(owner2, op.tokenId, 2)
+    # data[1] = owner(16 bytes)
+    assert data[1] = deowner[1]
+    # data[1] = owner(7 bytes) + tokenId + srcTokenId + amount(5 bytes)
+    let (value) = join_bytes(deowner[2], op.tokenId, 2)
     let (value) = join_bytes(value, op.srcTokenId, 2)
-    let (value) = join_bytes(value, amount1, 1)
-    assert data[1] = value
+    let (value) = join_bytes(value, 0, 5)
+    assert data[2] = value
     # data[2] = amount(15 bytes)
-    assert data[2] = amount2
+    assert data[3] = 0
 
     return (Bytes(
         _start=0,
         bytes_per_felt=FELT_MAX_BYTES,
-        size=47,
-        data_length=3,
+        size=PACKED_FULLEXIT_PUBDATA_BYTES,
+        data_length=4,
         data=data
     ))
 end
@@ -263,7 +236,7 @@ struct Withdraw:
     member accountId : felt             # uint32, the account id to withdraw from
     member tokenId : felt               # uint16, the token that to withdraw
     member amount : felt                # uint128, the token amount to withdraw
-    member owner : felt                 # 20 byte, the address to receive token
+    member owner : felt                 # 32 byte, the address to receive token
     member nonce : felt                 # uint32, zero means normal withdraw, not zero means fast withdraw and the value is the account nonce
     member fastWithdrawFeeRate : felt   # uint16, fast withdraw fee rate taken by accepter
 end
@@ -275,7 +248,7 @@ func read_withdraw_pubdata{range_check_ptr}(op_pubdata : Bytes) -> (parsed : Wit
     let (offset, local accountId) = read_felt(op_pubdata, offset, ACCOUNT_ID_BYTES)
     let (offset, local tokenId) = read_felt(op_pubdata, offset, TOKEN_BYTES)
     let (offset, local amount) = read_felt(op_pubdata, offset, AMOUNT_BYTES)
-    let (offset, local owner) = read_felt(op_pubdata, offset, ADDRESS_BYTES)
+    let (offset, local owner) = read_address(op_pubdata, offset)
     let (offset, local nonce) = read_felt(op_pubdata, offset, NONCE_BYTES)
     let (_, local fastWithdrawFeeRate) = read_felt(op_pubdata, offset, 2)
     
@@ -296,7 +269,7 @@ struct ForcedExit:
     member chainId : felt   # uint8, which chain the force exit happened
     member tokenId : felt   # uint16, the token that to withdraw
     member amount : felt    # uint128, the token amount to withdraw
-    member target : felt    # 20 byte, the address to receive token
+    member target : felt    # 32 byte, the address to receive token
 end
 
 # Deserialize ForcedExit pubdata
@@ -305,7 +278,7 @@ func read_forcedexit_pubdata{range_check_ptr}(op_pubdata : Bytes) -> (parsed : F
     let (offset, local chainId) = read_felt(op_pubdata, OP_TYPE_BYTES, CHAIN_BYTES)
     let (offset, local tokenId) = read_felt(op_pubdata, offset, TOKEN_BYTES)
     let (offset, local amount) = read_felt(op_pubdata, offset, AMOUNT_BYTES)
-    let (offset, local target) = read_felt(op_pubdata, offset, ADDRESS_BYTES)
+    let (offset, local target) = read_address(op_pubdata, offset)
     
 
     let parsed = ForcedExit(
@@ -322,8 +295,8 @@ struct ChangePubKey:
     member chainId : felt    # 1 byte, which chain to verify(only one chain need to verify for gas saving)
     member accountId : felt  # 4 byte, the account that to change pubkey
     member pubKeyHash : felt # 20 byte, hash of the new rollup pubkey
-    member owner : felt       # 20 byte, the owner that own this account
-    member nonce : felt       # 4 byte, the account nonce
+    member owner : felt   # 32 byte, the owner that own this account
+    member nonce : felt      # 4 byte, the account nonce
 end
 
 # Deserialize ChangePubKey pubdata
@@ -332,7 +305,7 @@ func read_changepubkey_pubdata{range_check_ptr}(op_pubdata : Bytes) -> (parsed :
     let (offset, local chainId) = read_felt(op_pubdata, OP_TYPE_BYTES, CHAIN_BYTES)
     let (offset, local accountId) = read_felt(op_pubdata, offset, ACCOUNT_ID_BYTES)
     let (offset, local pubKeyHash) = read_felt(op_pubdata, offset, 20)
-    let (offset, local owner) = read_felt(op_pubdata, offset, ADDRESS_BYTES)
+    let (offset, local owner) = read_address(op_pubdata, offset)
     let (offset, local nonce) = read_felt(op_pubdata, offset, NONCE_BYTES)
 
     let parsed = ChangePubKey(
@@ -344,3 +317,4 @@ func read_changepubkey_pubdata{range_check_ptr}(op_pubdata : Bytes) -> (parsed :
     )
     return (parsed)
 end
+

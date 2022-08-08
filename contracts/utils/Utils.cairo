@@ -4,29 +4,9 @@ from starkware.cairo.common.cairo_keccak.keccak import finalize_keccak, keccak_f
 from starkware.cairo.common.cairo_builtins import BitwiseBuiltin
 from starkware.cairo.common.uint256 import Uint256
 from starkware.cairo.common.alloc import alloc
-from starkware.cairo.common.math import assert_nn_le, unsigned_div_rem
+from starkware.cairo.common.math import assert_nn_le, unsigned_div_rem, assert_not_equal
 from starkware.cairo.common.math_cmp import is_le
 from contracts.utils.Bytes import Bytes, split_bytes, join_bytes
-
-# Computes the keccak hash of the given input
-func hash_array_to_uint160{
-    range_check_ptr,
-    bitwise_ptr : BitwiseBuiltin*
-}(n_elements : felt, elements : felt*) -> (res : felt):
-    alloc_locals
-
-    let (local keccak_ptr_start : felt*) = alloc()
-    let keccak_ptr = keccak_ptr_start
-
-    let (hash) = keccak_felts{keccak_ptr=keccak_ptr}(n_elements, elements)
-    finalize_keccak(keccak_ptr_start=keccak_ptr_start, keccak_ptr_end=keccak_ptr)
-
-    # Uint256 has two 16 bytes(128 bit) part
-    let (high_32) = split_bytes(16, hash.high, 12, 4)
-    let (output) = join_bytes(high_32, hash.low, 16)
-
-    return (res=output)
-end
 
 func hash_array_to_uint256{
     range_check_ptr,
@@ -53,6 +33,36 @@ end
 func uint256_to_felt{range_check_ptr}(input : Uint256) -> (output : felt):
     assert input.high = 0
     return (input.low)
+end
+
+func deserialize_address{range_check_ptr}(
+    address : Uint256, len1 : felt, len2 : felt, len3 : felt
+) -> (
+    data_len : felt, data : felt*
+):
+    alloc_locals
+    # make sure deserialize into 3 part, and second part len must be 16 bytes
+    assert len1 + len2 + len3 = 32
+    assert_not_equal(len1, 0)
+    assert_nn_le(len1, 16)
+
+    let (data : felt*) = alloc()
+
+    let (data1) = split_bytes(16, address.high, 0, len1)
+    assert data[0] = data1
+
+    let (data2_1) = split_bytes(16, address.high, len1, 16 - len1)
+    let (data2_2) = split_bytes(16, address.low, 0, len1 + len2 - 16)
+    let (data2) = join_bytes(data2_1, data2_2, len1 + len2 - 16)
+    assert data[1] = data2
+
+    let (data3) = split_bytes(16, address.low, len1 + len2 - 16, len3)
+    assert data[2] = data3
+    return (3, data)
+end
+
+func address_to_felt(input : Uint256) -> (output : felt):
+    return(input.high * 2**128 + input.low)
 end
 
 # Return lesser of two felt
