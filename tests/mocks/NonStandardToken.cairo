@@ -2,6 +2,7 @@
 
 from starkware.cairo.common.cairo_builtins import HashBuiltin
 from starkware.cairo.common.uint256 import Uint256, uint256_unsigned_div_rem
+from starkware.cairo.common.bool import TRUE
 from starkware.starknet.common.syscalls import get_caller_address
 from starkware.cairo.common.math_cmp import is_not_zero
 from openzeppelin.token.erc20.library import ERC20
@@ -37,6 +38,16 @@ func mint{
 end
 
 @external
+func approve{
+    syscall_ptr : felt*,
+    pedersen_ptr : HashBuiltin*,
+    range_check_ptr
+}(spender : felt, amount : Uint256) -> (success : felt):
+    ERC20.approve(spender, amount)
+    return (TRUE)
+end
+
+@external
 func mintTo{
     syscall_ptr : felt*,
     pedersen_ptr : HashBuiltin*,
@@ -51,10 +62,11 @@ func transfer{
     syscall_ptr : felt*,
     pedersen_ptr : HashBuiltin*,
     range_check_ptr
-}(sender : felt, to : felt, amount : Uint256):
+}(recipient : felt, amount : Uint256) -> (success : felt):
     alloc_locals
+    let (sender) = get_caller_address()
 
-    ERC20._transfer(sender, to, amount)
+    ERC20.transfer(recipient, amount)
 
     # take 10% fee
     let (gas, _) = uint256_unsigned_div_rem(amount, Uint256(10, 0))
@@ -62,7 +74,32 @@ func transfer{
 
     # take 20% fee
     let (gas, _) = uint256_unsigned_div_rem(amount, Uint256(5, 0))
-    ERC20._burn(to, gas)
+    ERC20._burn(recipient, gas)
 
-    return ()
+    return (TRUE)
+end
+
+
+@external
+func transferFrom{
+    syscall_ptr : felt*,
+    pedersen_ptr : HashBuiltin*,
+    range_check_ptr
+}(
+    sender : felt,
+    recipient : felt,
+    amount : Uint256
+) -> (success : felt):
+    alloc_locals
+    ERC20.transfer_from(sender, recipient, amount)
+
+    # take 10% fee
+    let (gas, _) = uint256_unsigned_div_rem(amount, Uint256(10, 0))
+    ERC20._burn(sender, gas)
+
+    # take 20% fee
+    let (gas, _) = uint256_unsigned_div_rem(amount, Uint256(5, 0))
+    ERC20._burn(recipient, gas)
+    
+    return (TRUE)
 end

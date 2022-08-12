@@ -962,47 +962,6 @@ func withdrawPendingBalance{
     return ()
 end
 
-# Sends tokens
-# NOTE: will revert if transfer call fails or rollup balance difference (before and after transfer) is bigger than _maxAmount
-# This function is used to allow tokens to spend zkLink contract balance up to amount that is requested
-@external
-func transferERC20{
-    syscall_ptr : felt*,
-    pedersen_ptr : HashBuiltin*,
-    bitwise_ptr : BitwiseBuiltin*,
-    range_check_ptr
-}(token_address : felt, to : felt, _amount : felt, max_amount : felt, is_standard : felt) -> (amount : felt):
-    alloc_locals
-    # can be called only from this contract as one "external" call 
-    # (to revert all this function state changes if it is needed)
-    let (sender) = get_caller_address()
-    let (current_contract_address) = get_contract_address()
-    with_attr error_message("n0"):
-        assert sender = current_contract_address
-    end
-
-    # most tokens are standard, fewer query token balance can save gas
-    if is_standard == 1:
-        IERC20.transfer(contract_address=token_address, recipient=to, amount=Uint256(_amount, 0))
-        return (_amount)
-    else:
-        let (balance_before : Uint256) = IERC20.balanceOf(contract_address=token_address, account=current_contract_address)
-        IERC20.transfer(contract_address=token_address, recipient=to, amount=Uint256(_amount, 0))
-        let (balance_after : Uint256) = IERC20.balanceOf(contract_address=token_address, account=current_contract_address)
-        let (local balance_diff : Uint256) = uint256_sub(balance_before, balance_after)
-        # transfer is considered successful only if the balance of the contract decreased after transfer
-        with_attr error_message("n1"):
-            let (lt) = uint256_lt(Uint256(0, 0), balance_diff)
-            assert lt = 1
-        end
-        # rollup balance difference (before and after transfer) is bigger than `_maxAmount`
-        with_attr error_message("n2"):
-            let (le) = uint256_le(balance_diff, Uint256(max_amount, 0))
-        end
-        return (balance_diff.low)
-    end
-end
-
 #
 # Validator interface
 #
@@ -2722,4 +2681,43 @@ func _checkAccept{
     end
 
     return (amountReceive, hash, tokenAddress)
+end
+
+# Sends tokens
+# NOTE: will revert if transfer call fails or rollup balance difference (before and after transfer) is bigger than _maxAmount
+# This function is used to allow tokens to spend zkLink contract balance up to amount that is requested
+func transferERC20{
+    syscall_ptr : felt*,
+    pedersen_ptr : HashBuiltin*,
+    bitwise_ptr : BitwiseBuiltin*,
+    range_check_ptr
+}(token_address : felt, to : felt, _amount : felt, max_amount : felt, is_standard : felt) -> (amount : felt):
+    alloc_locals
+    # Starknet has not gas metering, so can not limit gas
+    # let (sender) = get_caller_address()
+    let (current_contract_address) = get_contract_address()
+    # with_attr error_message("n0"):
+    #     assert sender = current_contract_address
+    # end
+
+    # most tokens are standard, fewer query token balance can save gas
+    if is_standard == 1:
+        IERC20.transfer(contract_address=token_address, recipient=to, amount=Uint256(_amount, 0))
+        return (_amount)
+    else:
+        let (balance_before : Uint256) = IERC20.balanceOf(contract_address=token_address, account=current_contract_address)
+        IERC20.transfer(contract_address=token_address, recipient=to, amount=Uint256(_amount, 0))
+        let (balance_after : Uint256) = IERC20.balanceOf(contract_address=token_address, account=current_contract_address)
+        let (local balance_diff : Uint256) = uint256_sub(balance_before, balance_after)
+        # transfer is considered successful only if the balance of the contract decreased after transfer
+        with_attr error_message("n1"):
+            let (lt) = uint256_lt(Uint256(0, 0), balance_diff)
+            assert lt = 1
+        end
+        # rollup balance difference (before and after transfer) is bigger than `_maxAmount`
+        with_attr error_message("n2"):
+            let (le) = uint256_le(balance_diff, Uint256(max_amount, 0))
+        end
+        return (balance_diff.low)
+    end
 end

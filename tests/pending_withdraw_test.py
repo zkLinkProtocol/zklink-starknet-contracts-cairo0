@@ -190,9 +190,9 @@ async def test_withdrawPendingBalance_should_failed(after_initialized):
         reverted_with='b1'
     )
 
-# withdraw pending balance should success
+# withdraw pending eth balance should success
 @pytest.mark.asyncio
-async def test_withdrawPendingBalance_should_success(after_initialized):
+async def test_pending_withdraw_eth_should_success(after_initialized):
     zklink, verifier, eth, token2, token3, token4, default_sender, alice, governor = after_initialized
     
     depositAmount = to_wei(1.0, 'ether')
@@ -203,6 +203,9 @@ async def test_withdrawPendingBalance_should_success(after_initialized):
     )
     await signer.send_transaction(
         default_sender, eth.tokenAddress, 'approve', [zklink.contract_address, *uint(to_wei(10, 'ether'))]
+    )
+    await signer.send_transaction(
+        default_sender, eth.tokenAddress, 'transfer', [zklink.contract_address, *uint(to_wei(10, 'ether'))]
     )
     
     # increase pending balance
@@ -291,4 +294,193 @@ async def test_withdrawPendingBalance_should_success(after_initialized):
         [alice.contract_address, eth.tokenId]
     )
     assert tx_exec_info.result.response == [0]
+    
+
+# withdraw pending standard erc20 balance should success
+@pytest.mark.asyncio
+async def test_pending_withdraw_standard_erc20_should_success(after_initialized):
+    zklink, verifier, eth, token2, token3, token4, default_sender, alice, governor = after_initialized
+    
+    depositAmount = to_wei(1.0, 'ether')
+    
+    # mint
+    await signer.send_transaction(
+        default_sender, token2.tokenAddress, 'mint', [*uint(to_wei(10, 'ether'))]
+    )
+    await signer.send_transaction(
+        default_sender, token2.tokenAddress, 'approve', [zklink.contract_address, *uint(to_wei(10, 'ether'))]
+    )
+    
+    # increase pending balance
+    await signer.send_transaction(
+        default_sender, zklink.contract_address, 'depositERC20',
+        [
+            token2.tokenAddress,
+            depositAmount,
+            *to_uint(alice.contract_address),
+            0,
+            0
+        ]
+    )
+    
+    pubdata_size, pubdata = getDepositPubdata([1, 0, 0, token2.tokenId, token2.tokenId, depositAmount, alice.contract_address])
+    
+    await signer.send_transaction(
+        default_sender, zklink.contract_address, 'setExodus', [1]
+    )
+    
+    await signer.send_transaction(
+        default_sender, zklink.contract_address, 'cancelOutstandingDepositForExodusMode',
+        [pubdata_size, pubdata_size // 16 + 1, *pubdata]
+    )
+    
+    await signer.send_transaction(
+        default_sender, zklink.contract_address, 'setExodus', [0]
+    )
+    
+    tx_exec_info = await signer.send_transaction(
+        alice, zklink.contract_address, 'getPendingBalance',
+        [alice.contract_address, token2.tokenId]
+    )
+    assert tx_exec_info.result.response == [depositAmount]
+    
+    tx_exec_info = await signer.send_transaction(
+        alice, token2.tokenAddress, 'balanceOf',
+        [alice.contract_address]
+    )
+    b0 = from_uint(tx_exec_info.result.response)
+    
+    amount0 = to_wei(0.5, 'ether')
+    tx_exec_info = await signer.send_transaction(
+        alice, zklink.contract_address, 'withdrawPendingBalance',
+        [alice.contract_address, token2.tokenId, amount0]
+    )
+    assert_event_emitted(
+        tx_exec_info,
+        from_address=zklink.contract_address,
+        name='Withdrawal',
+        data=[token2.tokenId, amount0]
+    )
+    
+    tx_exec_info = await signer.send_transaction(
+        alice, token2.tokenAddress, 'balanceOf',
+        [alice.contract_address]
+    )
+    b1 = from_uint(tx_exec_info.result.response)
+    assert b1 == b0 + amount0
+    
+    tx_exec_info = await signer.send_transaction(
+        alice, zklink.contract_address, 'getPendingBalance',
+        [alice.contract_address, token2.tokenId]
+    )
+    assert tx_exec_info.result.response == [depositAmount - amount0]
+    
+    leftAmount = depositAmount - amount0
+    amount1 = to_wei(0.6, 'ether')
+    tx_exec_info = await signer.send_transaction(
+        alice, zklink.contract_address, 'withdrawPendingBalance',
+        [alice.contract_address, token2.tokenId, amount1]
+    )
+    assert_event_emitted(
+        tx_exec_info,
+        from_address=zklink.contract_address,
+        name='Withdrawal',
+        data=[token2.tokenId, leftAmount]
+    )
+    tx_exec_info = await signer.send_transaction(
+        alice, token2.tokenAddress, 'balanceOf',
+        [alice.contract_address]
+    )
+    b2 = from_uint(tx_exec_info.result.response)
+    assert b2 == b0 + depositAmount
+    
+    tx_exec_info = await signer.send_transaction(
+        alice, zklink.contract_address, 'getPendingBalance',
+        [alice.contract_address, token2.tokenId]
+    )
+    assert tx_exec_info.result.response == [0]
+    
+
+# withdraw pending non-standard erc20 balance should success
+@pytest.mark.asyncio
+async def test_pending_withdraw_nonstandard_erc20_should_success(after_initialized):
+    zklink, verifier, eth, token2, token3, token4, default_sender, alice, governor = after_initialized
+    
+    depositAmount = to_wei(1.0, 'ether')
+    
+    # mint
+    await signer.send_transaction(
+        default_sender, token3.tokenAddress, 'mint', [*uint(to_wei(10, 'ether'))]
+    )
+    await signer.send_transaction(
+        default_sender, token3.tokenAddress, 'approve', [zklink.contract_address, *uint(to_wei(10, 'ether'))]
+    )
+    
+    # increase pending balance
+    await signer.send_transaction(
+        default_sender, zklink.contract_address, 'depositERC20',
+        [
+            token3.tokenAddress,
+            depositAmount,
+            *to_uint(alice.contract_address),
+            0,
+            0
+        ]
+    )
+
+    reallyDepositAmount = to_wei(0.8, 'ether') # take 20% fee
+    
+    pubdata_size, pubdata = getDepositPubdata([1, 0, 0, token3.tokenId, token3.tokenId, reallyDepositAmount, alice.contract_address])
+    
+    await signer.send_transaction(
+        default_sender, zklink.contract_address, 'setExodus', [1]
+    )
+    
+    await signer.send_transaction(
+        default_sender, zklink.contract_address, 'cancelOutstandingDepositForExodusMode',
+        [pubdata_size, pubdata_size // 16 + 1, *pubdata]
+    )
+    
+    await signer.send_transaction(
+        default_sender, zklink.contract_address, 'setExodus', [0]
+    )
+    
+    tx_exec_info = await signer.send_transaction(
+        alice, zklink.contract_address, 'getPendingBalance',
+        [alice.contract_address, token3.tokenId]
+    )
+    assert tx_exec_info.result.response == [reallyDepositAmount]
+    
+    tx_exec_info = await signer.send_transaction(
+        alice, token3.tokenAddress, 'balanceOf',
+        [alice.contract_address]
+    )
+    b0 = from_uint(tx_exec_info.result.response)
+    
+    amount0 = to_wei(0.5, 'ether')
+    reallyAmount0 = to_wei(0.55, 'ether') # 0.5 * 1.1
+    reallyReceive0 = to_wei(0.4, 'ether') # 0.5 * 0.8
+    tx_exec_info = await signer.send_transaction(
+        alice, zklink.contract_address, 'withdrawPendingBalance',
+        [alice.contract_address, token3.tokenId, amount0]
+    )
+    assert_event_emitted(
+        tx_exec_info,
+        from_address=zklink.contract_address,
+        name='Withdrawal',
+        data=[token3.tokenId, reallyAmount0]
+    )
+    
+    tx_exec_info = await signer.send_transaction(
+        alice, token3.tokenAddress, 'balanceOf',
+        [alice.contract_address]
+    )
+    b1 = from_uint(tx_exec_info.result.response)
+    assert b1 == b0 + reallyReceive0
+    
+    tx_exec_info = await signer.send_transaction(
+        alice, zklink.contract_address, 'getPendingBalance',
+        [alice.contract_address, token3.tokenId]
+    )
+    assert tx_exec_info.result.response == [reallyDepositAmount - reallyAmount0]
     
