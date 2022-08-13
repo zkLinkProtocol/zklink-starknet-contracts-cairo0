@@ -1,4 +1,5 @@
 from eth_abi.packed import encode_abi_packed
+from web3 import Web3
 
 OP_NOOP = 0
 OP_DEPOSIT = 1
@@ -57,3 +58,11 @@ def getBytesArrayData(example):
         [[ x.to_bytes(1, 'big') for x in example]]
     )
     return len(data), splitPubData(data)
+
+def calAcceptHash(example):
+    hexbytes = Web3.solidityKeccak(
+        ["uint256","uint16","uint128","uint16","uint32"],
+        example
+    )
+    return int.from_bytes(hexbytes, 'big')
+    

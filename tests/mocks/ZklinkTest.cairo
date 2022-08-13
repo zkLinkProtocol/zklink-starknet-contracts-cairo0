@@ -276,6 +276,16 @@ func setGovernor{
     return ()
 end
 
+@view
+func getAccepter{
+    syscall_ptr : felt*,
+    pedersen_ptr : HashBuiltin*,
+    range_check_ptr
+}(accountId : felt, hash : Uint256) -> (accepter : felt):
+    let (accepter) = get_accept((accountId, hash))
+    return (accepter)
+end
+
 @external
 func setAccepter{
     syscall_ptr : felt*,

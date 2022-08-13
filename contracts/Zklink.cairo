@@ -2569,7 +2569,7 @@ func acceptERC20{
         assert_le(amountReceive, receiverBalanceDiff_u128)
     end
     tempvar amountReceive = receiverBalanceDiff_u128
-    let (accepterBalanceDiff) = uint256_sub(accepterBalanceAfter, accepterBalanceBefore)
+    let (accepterBalanceDiff : Uint256) = uint256_sub(accepterBalanceBefore, accepterBalanceAfter)
     let (local amountSent) = uint256_to_felt(accepterBalanceDiff)
 
     let (local sender) = get_caller_address()
@@ -2674,10 +2674,10 @@ func _checkAccept{
 
     # accept tx may be later than block exec tx(with user withdraw op)
     # TODO: keccak
-    let hash = Uint256(0, 0)
+    let hash = Uint256(nonce, 0)
     with_attr error_message("H6"):
-        let (valid) = get_accept((accountId, hash))
-        assert valid = 0
+        let (accepter) = get_accept((accountId, hash))
+        assert accepter = 0
     end
 
     return (amountReceive, hash, tokenAddress)
