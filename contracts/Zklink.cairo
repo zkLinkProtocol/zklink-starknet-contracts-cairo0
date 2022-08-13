@@ -2288,13 +2288,15 @@ func executeWithdraw{
         tempvar bitwise_ptr = bitwise_ptr
         tempvar range_check_ptr = range_check_ptr
     else:
-        let (packed : felt*) = alloc()
-        assert packed[0] = op.owner
-        assert packed[1] = op.tokenId
-        assert packed[2] = op.amount
-        assert packed[3] = op.fastWithdrawFeeRate
-        assert packed[4] = op.nonce
-        let (fwHash : Uint256) = hash_array_to_uint256(5, packed)
+        # TODO: keccak
+        # let (packed : felt*) = alloc()
+        # assert packed[0] = op.owner
+        # assert packed[1] = op.tokenId
+        # assert packed[2] = op.amount
+        # assert packed[3] = op.fastWithdrawFeeRate
+        # assert packed[4] = op.nonce
+        # let (fwHash : Uint256) = hash_array_to_uint256(5, packed)
+        let fwHash = Uint256(op.nonce, 0)  # This is just for test without keccak
         let (accepter) = get_accept((op.accountId, fwHash))
         if accepter == 0:
             # receiver act as a accepter
@@ -2674,7 +2676,8 @@ func _checkAccept{
 
     # accept tx may be later than block exec tx(with user withdraw op)
     # TODO: keccak
-    let hash = Uint256(nonce, 0)
+    # hash = keccak256(abi.encodePacked(receiver, tokenId, amount, withdrawFeeRate, nonce));
+    let hash = Uint256(nonce, 0)    # This is just for test without keccak
     with_attr error_message("H6"):
         let (accepter) = get_accept((accountId, hash))
         assert accepter = 0
