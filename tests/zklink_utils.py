@@ -28,6 +28,14 @@ def getDepositPubdata(example):
         [OP_DEPOSIT] + example)
     return len(data), splitPubData(data)
 
+def getDepositPubdataHash(example):
+    hexbytes = Web3.solidityKeccak(
+        ["uint8","uint8","uint32","uint8","uint16","uint16","uint128","uint256"],
+        [OP_DEPOSIT] + example
+    )
+    return int.from_bytes(hexbytes[:20], 'big')
+    
+
 def getWithdrawPubdata(example):
     data = encode_abi_packed(
         ["uint8","uint8","uint32","uint16","uint128","uint256","uint32","uint16"],
@@ -39,6 +47,13 @@ def getFullExitPubdata(example):
         ["uint8","uint8","uint32","uint8","uint256","uint16","uint16","uint128"],
         [OP_FULL_EXIT] + example)
     return len(data), splitPubData(data)
+
+def getFullExitPubdataHash(example):
+    hexbytes = Web3.solidityKeccak(
+        ["uint8","uint8","uint32","uint8","uint256","uint16","uint16","uint128"],
+        [OP_FULL_EXIT] + example
+    )
+    return int.from_bytes(hexbytes[:20], 'big')
 
 def getForcedExitPubdata(example):
     data = encode_abi_packed(
