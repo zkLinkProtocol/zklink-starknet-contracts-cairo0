@@ -195,7 +195,7 @@ async def test_deposit_should_failed(after_initialized):
     await assert_revert(
         signer.send_transaction(
             default_sender, zklink.contract_address, 'depositERC20',
-            [token2.contract_address, 30, *to_uint(to), 0, 0]
+            [token2.tokenAddress, 30, *to_uint(to), 0, 0]
         ),
         reverted_with='0'
     )
@@ -229,25 +229,25 @@ async def test_deposit_should_failed(after_initialized):
     await assert_revert(
         signer.send_transaction(
             default_sender, zklink.contract_address, 'depositERC20',
-            [token4.contract_address, 30, *to_uint(to), 0, 0]
+            [token4.tokenAddress, 30, *to_uint(to), 0, 0]
         ),
         reverted_with='e3'
     )
 
     # token deposit paused
     await signer.send_transaction(
-        governor, zklink.tokenAddress, 'setTokenPaused',
+        governor, zklink.contract_address, 'setTokenPaused',
         [token2.tokenId, 1]
     )
     await assert_revert(
         signer.send_transaction(
             default_sender, zklink.contract_address, 'depositERC20',
-            [token2.contract_address, 30, *to_uint(to), 0, 0]
+            [token2.tokenAddress, 30, *to_uint(to), 0, 0]
         ),
         reverted_with='e4'
     )
     await signer.send_transaction(
-        governor, zklink.tokenAddress, 'setTokenPaused',
+        governor, zklink.contract_address, 'setTokenPaused',
         [token2.tokenId, 0]
     )
 
@@ -255,7 +255,7 @@ async def test_deposit_should_failed(after_initialized):
     await assert_revert(
         signer.send_transaction(
             default_sender, zklink.contract_address, 'depositERC20',
-            [token2.contract_address, 30, *to_uint(to), 0, 1]
+            [eth.tokenAddress, 30, *to_uint(to), 0, 1]
         ),
         reverted_with='e5'
     )
@@ -273,7 +273,7 @@ async def test_deposit_should_failed(after_initialized):
     await assert_revert(
         signer.send_transaction(
             default_sender, zklink.contract_address, 'depositETH',
-            [*to_uint(0), subAccountId, 0]
+            [*to_uint(0), subAccountId, amount]
         ),
         reverted_with='e1'
     )
@@ -283,7 +283,7 @@ async def test_deposit_should_failed(after_initialized):
     await assert_revert(
         signer.send_transaction(
             default_sender, zklink.contract_address, 'depositETH',
-            [*to_uint(0), tooLargeSubId, amount]
+            [*to_uint(to), tooLargeSubId, amount]
         ),
         reverted_with='e2'
     )

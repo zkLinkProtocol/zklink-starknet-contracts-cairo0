@@ -240,7 +240,7 @@ async def test_accept_token_should_failed(after_initialized):
     # hash = to_uint(calAcceptHash([bob.contract_address, eth.tokenId, 100, 100, 1]))
     await signer.send_transaction(
         default_sender, zklink.contract_address, 'setAccepter',
-        [fwAid, *uint(0), alice.contract_address]
+        [fwAid, *uint(1), alice.contract_address]
     )
     
     await assert_revert(
