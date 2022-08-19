@@ -45,7 +45,7 @@ from contracts.utils.Bytes import (
     read_uint256,
     read_uint256_array,
     read_bytes,
-    FELT_MAX_BYTES,
+    BYTES_PER_FELT,
     split_bytes,
     join_bytes,
     create_empty_bytes
@@ -75,8 +75,8 @@ from contracts.utils.Utils import (
     uint256_to_felt,
     address_to_felt,
     min_felt,
-    concat_hash,
-    concat_two_hash,
+    concatHash,
+    concatTwoHash,
     hashBytesToBytes20
 )
 
@@ -657,8 +657,6 @@ func cancelOutstandingDepositForExodusMode{
     let (pr : PriorityOperation) = get_priorityRequests(id)
     if pr.opType == OpType.Deposit:
         local bytes : Bytes = Bytes(
-            _start=0,
-            bytes_per_felt=FELT_MAX_BYTES,
             size=size,
             data_length=data_len,
             data=data
@@ -978,8 +976,6 @@ func commitBlock{
 }(size : felt, data_len : felt, data : felt*):
     alloc_locals
     local bytes : Bytes = Bytes(
-        _start=0,
-        bytes_per_felt=FELT_MAX_BYTES,
         size=size,
         data_length=data_len,
         data=data
@@ -1004,8 +1000,6 @@ func commitCompressedBlock{
 }(size : felt, data_len : felt, data : felt*):
     alloc_locals
     local bytes : Bytes = Bytes(
-        _start=0,
-        bytes_per_felt=FELT_MAX_BYTES,
         size=size,
         data_length=data_len,
         data=data
@@ -1079,8 +1073,6 @@ func proveBlocks{
     ReentrancyGuard._start()
 
     local bytes : Bytes = Bytes(
-        _start=0,
-        bytes_per_felt=FELT_MAX_BYTES,
         size=proof_size,
         data_length=proof_data_len,
         data=proof_data
@@ -1252,8 +1244,6 @@ func executeBlock{
 
     # parse calldata
     local bytes : Bytes = Bytes(
-        _start=0,
-        bytes_per_felt=FELT_MAX_BYTES,
         size=size,
         data_length=data_len,
         data=data
@@ -1867,7 +1857,7 @@ func _create_sync_hash{
     if chainIndex_and_ALL_CHAINS == chainIndex:
         let (hash_low) = dict_read{dict_ptr=low}(key=i)
         let (hash_high) = dict_read{dict_ptr=high}(key=i)
-        let (syncHash) = concat_two_hash(before_commitment, Uint256(hash_low, hash_high))
+        let (syncHash) = concatTwoHash(before_commitment, Uint256(hash_low, hash_high))
         return (syncHash)
     else:
         return (before_commitment)
@@ -1988,7 +1978,7 @@ func _collect_onchain_ops{
 
     let (old_onchain_operation_pubdata_hash_low) = dict_read{dict_ptr=onchain_operation_pubdata_hashs_low}(key=chain_id)
     let (old_onchain_operation_pubdata_hash_high) = dict_read{dict_ptr=onchain_operation_pubdata_hashs_high}(key=chain_id)
-    let (new_onchain_operation_pubdata_hash : Uint256) = concat_hash(
+    let (new_onchain_operation_pubdata_hash : Uint256) = concatHash(
         Uint256(old_onchain_operation_pubdata_hash_low, old_onchain_operation_pubdata_hash_high), opPubData)
     
     dict_write{dict_ptr=onchain_operation_pubdata_hashs_low}(key=chain_id, new_value=new_onchain_operation_pubdata_hash.low)
@@ -1996,7 +1986,7 @@ func _collect_onchain_ops{
 
     let (has_processable_pubdata) = is_not_zero(processablePubData.size)
     if has_processable_pubdata == 1:
-        let (processable_operations_hash : Uint256) = concat_hash(before_processable_operations_hash, processablePubData)
+        let (processable_operations_hash : Uint256) = concatHash(before_processable_operations_hash, processablePubData)
         return (offsets_commitmemt, priority_operations_processed, processable_operations_hash)
     else:
         return (offsets_commitmemt, priority_operations_processed, before_processable_operations_hash)
@@ -2267,7 +2257,7 @@ func _executeOneBlock{
         end
     end
 
-    let (hash : Uint256) = concat_hash(before_hash, pubData)
+    let (hash : Uint256) = concatHash(before_hash, pubData)
     return (hash)
 end
 

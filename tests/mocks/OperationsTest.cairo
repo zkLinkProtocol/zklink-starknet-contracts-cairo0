@@ -28,8 +28,6 @@ func testDepositPubdata{
 }(_example : DepositOperation, size : felt, data_len : felt, data : felt*):
     alloc_locals
     local bytes : Bytes = Bytes(
-        _start=0,
-        bytes_per_felt=FELT_MAX_BYTES,
         size=size,
         data_length=data_len,
         data=data
@@ -105,8 +103,6 @@ func testWithdrawPubdata{
 }(_example : Withdraw, size : felt, data_len : felt, data : felt*):
     alloc_locals
     local bytes : Bytes = Bytes(
-        _start=0,
-        bytes_per_felt=FELT_MAX_BYTES,
         size=size,
         data_length=data_len,
         data=data
@@ -146,8 +142,6 @@ func testFullExitPubdata{
 }(_example : FullExit, size : felt, data_len : felt, data : felt*):
     alloc_locals
     local bytes : Bytes = Bytes(
-        _start=0,
-        bytes_per_felt=FELT_MAX_BYTES,
         size=size,
         data_length=data_len,
         data=data
@@ -223,8 +217,6 @@ func testForcedExitPubdata{
 }(_example : ForcedExit, size : felt, data_len : felt, data : felt*):
     alloc_locals
     local bytes : Bytes = Bytes(
-        _start=0,
-        bytes_per_felt=FELT_MAX_BYTES,
         size=size,
         data_length=data_len,
         data=data
@@ -256,8 +248,6 @@ func testChangePubkeyPubdata{
 }(_example : ChangePubKey, size : felt, data_len : felt, data : felt*):
     alloc_locals
     local bytes : Bytes = Bytes(
-        _start=0,
-        bytes_per_felt=FELT_MAX_BYTES,
         size=size,
         data_length=data_len,
         data=data

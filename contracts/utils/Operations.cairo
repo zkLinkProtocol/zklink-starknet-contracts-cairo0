@@ -7,7 +7,7 @@ from starkware.cairo.common.math import unsigned_div_rem
 from starkware.cairo.common.pow import pow
 from starkware.cairo.common.uint256 import Uint256, uint256_eq
 from contracts.utils.Utils import hashBytesToBytes20, deserialize_address
-from contracts.utils.Bytes import Bytes, read_felt, read_uint256, join_bytes, FELT_MAX_BYTES, read_address
+from contracts.utils.Bytes import Bytes, read_felt, read_uint256, join_bytes, BYTES_PER_FELT, read_address
 
 # ZKLink circuit operation type
 struct OpType:
@@ -113,8 +113,6 @@ func writeDepositPubdataForPriorityQueue{range_check_ptr}(op : DepositOperation)
     assert data[3] = deowner[2]
 
     return (Bytes(
-        _start=0,
-        bytes_per_felt=FELT_MAX_BYTES,
         size=PACKED_DEPOSIT_PUBDATA_BYTES,
         data_length=4,
         data=data
@@ -222,8 +220,6 @@ func writeFullExitPubdataForPriorityQueue{range_check_ptr}(op : FullExit) -> (by
     assert data[3] = 0
 
     return (Bytes(
-        _start=0,
-        bytes_per_felt=FELT_MAX_BYTES,
         size=PACKED_FULLEXIT_PUBDATA_BYTES,
         data_length=4,
         data=data

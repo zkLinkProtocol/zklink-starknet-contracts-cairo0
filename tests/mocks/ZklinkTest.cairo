@@ -152,8 +152,6 @@ func testAddPriorityRequest{
 }(_opType : felt, size : felt, data_len : felt, data : felt*):
     alloc_locals
     local bytes : Bytes = Bytes(
-        _start=0,
-        bytes_per_felt=FELT_MAX_BYTES,
         size=size,
         data_length=data_len,
         data=data
@@ -171,8 +169,6 @@ func testCommitBlock{
 }(size : felt, data_len : felt, data : felt*):
     alloc_locals
     local bytes : Bytes = Bytes(
-        _start=0,
-        bytes_per_felt=FELT_MAX_BYTES,
         size=size,
         data_length=data_len,
         data=data
@@ -209,8 +205,6 @@ func testCommitOneBlock{
 }(size : felt, data_len : felt, data : felt*) -> (storedNewBlock : StoredBlockInfo):
     alloc_locals
     local bytes : Bytes = Bytes(
-        _start=0,
-        bytes_per_felt=FELT_MAX_BYTES,
         size=size,
         data_length=data_len,
         data=data
