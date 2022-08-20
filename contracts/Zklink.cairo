@@ -33,9 +33,9 @@ from starkware.starknet.common.syscalls import (
     get_contract_address
 )
 
-from openzeppelin.token.erc20.interfaces.IERC20 import IERC20
-from openzeppelin.security.initializable import Initializable
-from openzeppelin.security.reentrancyguard import ReentrancyGuard
+from openzeppelin.token.erc20.IERC20 import IERC20
+from openzeppelin.security.initializable.library import Initializable
+from openzeppelin.security.reentrancyguard.library import ReentrancyGuard
 
 from contracts.utils.ProxyLib import Proxy
 from contracts.utils.Bytes import (
