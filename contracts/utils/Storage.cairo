@@ -8,8 +8,9 @@ from starkware.starknet.common.syscalls import get_contract_address, get_caller_
 from starkware.cairo.common.uint256 import Uint256
 
 from contracts.utils.Operations import PriorityOperation
-from contracts.utils.Bytes import Bytes, read_felt, read_uint256
+from contracts.utils.Bytes import Bytes, read_felt, read_uint256, join_bytes, split_felt_to_two
 from contracts.utils.ProxyLib import Proxy
+from contracts.utils.Utils import hashBytes
 
 # ETH_ADDRESS
 @storage_var
@@ -677,25 +678,68 @@ func parse_stored_block_info{range_check_ptr}(bytes : Bytes, _offset : felt) -> 
     ))
 end
 
-func convert_stored_block_info_to_array(data : StoredBlockInfo) -> (n_elements : felt, elements : felt*):
+func writeStoredBlockInfoForHash{range_check_ptr}(info : StoredBlockInfo) -> (bytes : Bytes):
     alloc_locals
-    local elements : felt*
-    let (local elements : felt*) = alloc()
+    let (data : felt*) = alloc()
 
-    assert elements[0] = data.block_number
-    assert elements[1] = data.priority_operations
-    assert elements[2] = data.pending_onchain_operations_hash.low
-    assert elements[3] = data.pending_onchain_operations_hash.high
-    assert elements[4] = data.timestamp.low
-    assert elements[5] = data.timestamp.high
-    assert elements[6] = data.state_hash.low
-    assert elements[7] = data.state_hash.high
-    assert elements[8] = data.commitment.low
-    assert elements[9] = data.commitment.high
-    assert elements[10] = data.sync_hash.low
-    assert elements[11] = data.sync_hash.high
+    # bytes of Withdraw member (172 bytes)
+    # block_number :                    4
+    # priority_operations :             8
+    # pending_onchain_operations_hash : 32
+    # timestamp :                       32
+    # state_hash :                      32
+    # commitment :                      32
+    # sync_hash :                       32
 
-    return (n_elements=12, elements=elements)
+    # data[0] = block_number + priority_operations + pending_onchain_operations_hash_high (4 bytes)
+    let (value) = join_bytes(info.block_number, info.priority_operations, 8)
+    let (pending_onchain_operations_hash_high1, local pending_onchain_operations_hash_high2) = split_felt_to_two(16, info.pending_onchain_operations_hash.high, 4)
+    let (value) = join_bytes(value, pending_onchain_operations_hash_high1, 4)
+    assert data[0] = value
+    # data[1] = pending_onchain_operations_hash_high(12 bytes) + pending_onchain_operations_hash_low(4 bytes)
+    let (pending_onchain_operations_hash_low1, local pending_onchain_operations_hash_low2) = split_felt_to_two(16, info.pending_onchain_operations_hash.low, 4)
+    let (value) = join_bytes(pending_onchain_operations_hash_high2, pending_onchain_operations_hash_low1, 4)
+    assert data[1] = value
+    # data[2] = pending_onchain_operations_hash_low(12 bytes) + timestamp_high(4 bytes)
+    let (timestamp_high1, local timestamp_high2) = split_felt_to_two(16, info.timestamp.high, 4)
+    let (value) = join_bytes(pending_onchain_operations_hash_low2, timestamp_high1, 4)
+    assert data[2] = value
+    # data[3] = timestamp_high(12 bytes) + timestamp_low(4 bytes)
+    let (timestamp_low1, local timestamp_low2) = split_felt_to_two(16, info.timestamp.low, 4)
+    let (value) = join_bytes(timestamp_high2, timestamp_low1, 4)
+    assert data[3] = value
+    # data[4] = timestamp_low(12 bytes) + state_hash_high(4 bytes)
+    let (state_hash_high1, local state_hash_high2) = split_felt_to_two(16, info.state_hash.high, 4)
+    let (value) = join_bytes(timestamp_low2, state_hash_high1, 4)
+    assert data[4] = value
+    # data[5] = state_hash_high(12 bytes) + state_hash_low(4 bytes)
+    let (state_hash_low1, local state_hash_low2) = split_felt_to_two(16, info.state_hash.low, 4)
+    let (value) = join_bytes(state_hash_high2, state_hash_low1, 4)
+    assert data[5] = value
+    # data[6] = state_hash_low(12 bytes) + commitment_high(4 bytes)
+    let (commitment_high1, local commitment_high2) = split_felt_to_two(16, info.commitment.high, 4)
+    let (value) = join_bytes(state_hash_low2, commitment_high1, 4)
+    assert data[6] = value
+    # data[7] = commitment_high(12 bytes) + commitment_low(4 bytes)
+    let (commitment_low1, local commitment_low2) = split_felt_to_two(16, info.commitment.low, 4)
+    let (value) = join_bytes(commitment_high2, commitment_low1, 4)
+    assert data[7] = value
+    # data[8] = commitment_low(12 bytes) + sync_hash_high(4 bytes)
+    let (sync_hash_high1, local sync_hash_high2) = split_felt_to_two(16, info.sync_hash.high, 4)
+    let (value) = join_bytes(commitment_low2, sync_hash_high1, 4)
+    assert data[8] = value
+    # data[9] = sync_hash_high(12 bytes) + sync_hash_low(4 bytes)
+    let (sync_hash_low1, local sync_hash_low2) = split_felt_to_two(16, info.sync_hash.low, 4)
+    let (value) = join_bytes(sync_hash_high2, sync_hash_low1, 4)
+    assert data[9] = value
+    # data[10] = sync_hash_low(12 bytes)
+    assert data[10] = sync_hash_low2
+
+    return (Bytes(
+        size=172,
+        data_length=11,
+        data=data
+    ))
 end
 
 # Stored hashed StoredBlockInfo for some block number
@@ -849,8 +893,9 @@ func hashStoredBlockInfo{
     bitwise_ptr : BitwiseBuiltin*,
     range_check_ptr
 }(_storedBlockInfo : StoredBlockInfo) -> (hash : Uint256):
-    # TODO : keccak
-    return (Uint256(_storedBlockInfo.block_number, 0))
+    let (bytes : Bytes) = writeStoredBlockInfoForHash(_storedBlockInfo)
+    let (hash : Uint256) = hashBytes(bytes)
+    return (hash)
 end
 
 func increaseBalanceToWithdraw{

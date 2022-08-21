@@ -325,10 +325,9 @@ async def test_deposit_standard_erc20_should_success(after_initialized):
         default_sender, zklink.contract_address, 'getPriorityHash', [0]
     )
 
-    # TODO
-    # hashedPubdata = tx_exce_info.result.response[0]
-    # encodePubdata = getDepositPubdataHash20([1, 0, subAccountId, eth.tokenId, eth.tokenId, amount, to])
-    # assert hashedPubdata == encodePubdata
+    hashedPubdata = tx_exce_info.result.response[0]
+    encodePubdata = getDepositPubdataHash20([5, 0, subAccountId, eth.tokenId, eth.tokenId, amount, to])
+    assert hashedPubdata == encodePubdata
 
 
 # deposit standard erc20 with mapping should success
@@ -377,10 +376,9 @@ async def test_deposit_standard_erc20_with_mapping_should_success(after_initiali
     tx_exce_info = await signer.send_transaction(
         default_sender, zklink.contract_address, 'getPriorityHash', [0]
     )
-    # TODO
-    # hashedPubdata = tx_exce_info.result.response[0]
-    # encodePubdata = getDepositPubdataHash20([1, 0, subAccountId, token2.tokenId, token2.tokenId, amount, to])
-    # assert hashedPubdata == encodePubdata
+    hashedPubdata = tx_exce_info.result.response[0]
+    encodePubdata = getDepositPubdataHash20([5, 0, subAccountId, token2.tokenId, token2.mappingToken, amount, to])
+    assert hashedPubdata == encodePubdata
 
 
 # deposit non-standard erc20 should success
@@ -427,10 +425,9 @@ async def test_deposit_nonstandard_erc20_should_success(after_initialized):
     tx_exce_info = await signer.send_transaction(
         default_sender, zklink.contract_address, 'getPriorityHash', [0]
     )
-    # TODO
-    # hashedPubdata = tx_exce_info.result.response[0]
-    # encodePubdata = getDepositPubdataHash20([1, 0, subAccountId, token3.tokenId, token3.tokenId, amount - receiverFee, to])
-    # assert hashedPubdata == encodePubdata
+    hashedPubdata = tx_exce_info.result.response[0]
+    encodePubdata = getDepositPubdataHash20([5, 0, subAccountId, token3.tokenId, token3.tokenId, amount - receiverFee, to])
+    assert hashedPubdata == encodePubdata
 
 
 # invalid state or params should be failed when full exit
@@ -520,10 +517,9 @@ async def test_fullexit_shuold_success(after_initialized):
     tx_exce_info = await signer.send_transaction(
         default_sender, zklink.contract_address, 'getPriorityHash', [0]
     )
-    # TODO
-    # hashedPubdata = tx_exce_info.result.response[0]
-    # encodePubdata = getFullExitPubdataHash20([1, accountId, subAccountId, default_sender.contract_address, eth.tokenId, eth.tokenId, 0])
-    # assert hashedPubdata == encodePubdata
+    hashedPubdata = tx_exce_info.result.response[0]
+    encodePubdata = getFullExitPubdataHash20([5, accountId, subAccountId, default_sender.contract_address, eth.tokenId, eth.tokenId, 0])
+    assert hashedPubdata == encodePubdata
 
 
 # requestFullExit with mapping should success 
@@ -542,7 +538,6 @@ async def test_fullexit_with_mapping_shuold_success(after_initialized):
     tx_exce_info = await signer.send_transaction(
         default_sender, zklink.contract_address, 'getPriorityHash', [0]
     )
-    # TODO
-    # hashedPubdata = tx_exce_info.result.response[0]
-    # encodePubdata = getFullExitPubdataHash20([1, accountId, subAccountId, default_sender.contract_address, token4.tokenId, token4.mappingToken, 0])
-    # assert hashedPubdata == encodePubdata
+    hashedPubdata = tx_exce_info.result.response[0]
+    encodePubdata = getFullExitPubdataHash20([5, accountId, subAccountId, default_sender.contract_address, token2.tokenId, token2.mappingToken, 0])
+    assert hashedPubdata == encodePubdata

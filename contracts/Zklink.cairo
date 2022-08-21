@@ -18,7 +18,16 @@ from starkware.cairo.common.cairo_builtins import (
     HashBuiltin,
     BitwiseBuiltin
 )
-from starkware.cairo.common.math import assert_not_equal, assert_nn_le, unsigned_div_rem, assert_nn, assert_not_zero, assert_lt, assert_le
+from starkware.cairo.common.math import (
+    assert_not_equal,
+    assert_not_zero,
+    assert_nn_le,
+    assert_nn,
+    assert_lt,
+    assert_le,
+    unsigned_div_rem,
+    split_felt
+)
 from starkware.cairo.common.math_cmp import is_not_zero, is_le, is_nn
 from starkware.cairo.common.pow import pow
 from starkware.cairo.common.default_dict import default_dict_new, default_dict_finalize
@@ -48,7 +57,8 @@ from contracts.utils.Bytes import (
     BYTES_PER_FELT,
     split_bytes,
     join_bytes,
-    create_empty_bytes
+    create_empty_bytes,
+    create_bytes_from_uint160
 )
 from contracts.utils.Operations import (
     OpType,
@@ -64,6 +74,7 @@ from contracts.utils.Operations import (
     ChangePubKey,
     read_changepubkey_pubdata,
     Withdraw,
+    writeWithdrawPubdataForHash,
     read_withdraw_pubdata,
     ForcedExit,
     read_forcedexit_pubdata,
@@ -77,8 +88,9 @@ from contracts.utils.Utils import (
     min_felt,
     concatHash,
     concatTwoHash,
-    hashBytesToBytes20,
-    keccak_bytes_bigend
+    hashBytes,
+    hashUint256s,
+    hashBytesToBytes20
 )
 
 from contracts.utils.Config import (
@@ -147,7 +159,7 @@ from contracts.utils.Storage import (
     sub_totalCommittedPriorityRequests,
     get_totalBlocksSynchronized,
     set_totalBlocksSynchronized,
-    get_chain_id,
+    # get_chain_id,
     get_firstPriorityRequestId,
     increase_firstPriorityRequestId,
     only_delegate_call,
@@ -156,7 +168,7 @@ from contracts.utils.Storage import (
     parse_stored_block_info,
     get_storedBlockHashes,
     set_storedBlockHashes,
-    convert_stored_block_info_to_array,
+    writeStoredBlockInfoForHash,
     get_synchronizedChains,
     set_synchronizedChains,
     get_pendingBalances,
@@ -449,6 +461,7 @@ func initializer{
     _commitment : Uint256,
     _syncHash : Uint256
 ):
+    alloc_locals
     # Must call proxy init function immediately
     Proxy.initializer(_networkGovernor)
 
@@ -712,26 +725,28 @@ func setAuthPubkeyHash{
     # PubKeyHash should be 20 bytes.
     # TODO: check _pubkeyHash valid
     let (local sender) = get_caller_address()
-    let (hash) = get_authFacts((sender, _nonce))
-    let (is_zero) = uint256_eq(hash, Uint256(0, 0))
+    let (old_hash : Uint256) = get_authFacts((sender, _nonce))
+    let (is_zero) = uint256_eq(old_hash, Uint256(0, 0))
     if is_zero == 1:
-        # TODO: keccak
-        let h = Uint256(0, 0)
+        let (bytes : Bytes) = create_bytes_from_uint160(_pubkeyHash)
+        let (h : Uint256) = hashBytes(bytes)
         set_authFacts((sender, _nonce), h)
         FactAuth.emit(sender, _nonce, _pubkeyHash)
         tempvar syscall_ptr = syscall_ptr
         tempvar pedersen_ptr = pedersen_ptr
+        tempvar bitwise_ptr = bitwise_ptr
         tempvar range_check_ptr = range_check_ptr
     else:
         let (local currentResetTimer : Uint256) = get_authFactsResetTimer((sender, _nonce))
-        # TODO: on starknet, timestamp should use felt
         let (block_timestamp) = get_block_timestamp()
-        let timestamp = Uint256(block_timestamp, 0)
+        let (timestamp_high, timestamp_low) = split_felt(block_timestamp)
+        local timestamp : Uint256 = Uint256(timestamp_low, timestamp_high)
         let (eq) = uint256_eq(currentResetTimer, Uint256(0, 0))
         if eq == 1:
             set_authFactsResetTimer((sender, _nonce), timestamp)
             tempvar syscall_ptr = syscall_ptr
             tempvar pedersen_ptr = pedersen_ptr
+            tempvar bitwise_ptr = bitwise_ptr
             tempvar range_check_ptr = range_check_ptr
         else:
             with_attr error_message("B1"):
@@ -740,12 +755,13 @@ func setAuthPubkeyHash{
                 assert res = 1
             end
             set_authFactsResetTimer((sender, _nonce), Uint256(0, 0))
-            # # TODO: keccak
-            let h = Uint256(0, 0)
+            let (bytes : Bytes) = create_bytes_from_uint160(_pubkeyHash)
+            let (h : Uint256) = hashBytes(bytes)
             set_authFacts((sender, _nonce), h)
             FactAuth.emit(sender, _nonce, _pubkeyHash)
             tempvar syscall_ptr = syscall_ptr
             tempvar pedersen_ptr = pedersen_ptr
+            tempvar bitwise_ptr = bitwise_ptr
             tempvar range_check_ptr = range_check_ptr
         end
     end
@@ -874,8 +890,6 @@ func requestFullExit{
 
     # Effects
     # Priority Queue request
-    let (chain_id) = get_chain_id()
-
     # sender should same with _address
     with_attr error_message("a5"):
         let (sender) = get_caller_address()
@@ -885,7 +899,7 @@ func requestFullExit{
     
     if _mapping == 1:
         tempvar op = FullExit(
-            chainId=chain_id,
+            chainId=CHAIN_ID,
             accountId=_accountId,
             subAccountId=_subAccountId,
             owner=_address,   # Only the owner of account can fullExit for them self
@@ -895,7 +909,7 @@ func requestFullExit{
         )
     else:
         tempvar op = FullExit(
-            chainId=chain_id,
+            chainId=CHAIN_ID,
             accountId=_accountId,
             subAccountId=_subAccountId,
             owner=_address,   # Only the owner of account can fullExit for them self
@@ -1617,10 +1631,9 @@ func deposit{
 
     # Effects
     # Priority Queue request
-    let (chain_id) = get_chain_id()
     if _mapping == 1:
         tempvar op = DepositOperation(
-            chain_id=chain_id,
+            chain_id=CHAIN_ID,
             account_id=0,
             sub_account_id=_subAccountId,
             token_id=token_id,
@@ -1630,7 +1643,7 @@ func deposit{
         )
     else:
         tempvar op = DepositOperation(
-            chain_id=chain_id,
+            chain_id=CHAIN_ID,
             account_id=0,
             sub_account_id=_subAccountId,
             token_id=token_id,
@@ -1711,8 +1724,8 @@ func _commit_block{
         let (total_blocks_committed) = get_total_blocks_committed()
         let (local old_stored_block_hash : Uint256) = get_storedBlockHashes(total_blocks_committed)
 
-        let (n_elements : felt, elements : felt*) = convert_stored_block_info_to_array(_lastCommittedBlockData)
-        let (last_committed_block_hash : Uint256) = hash_array_to_uint256(n_elements, elements)
+        let (bytes : Bytes) = writeStoredBlockInfoForHash(_lastCommittedBlockData)
+        let (last_committed_block_hash : Uint256) = hashBytes(bytes)
 
         let (eq) =  uint256_eq(old_stored_block_hash, last_committed_block_hash)
         assert eq = 1
@@ -1721,8 +1734,8 @@ func _commit_block{
     # Effects
     let (_lastCommittedBlockData) = commit_one_block(_lastCommittedBlockData, _newBlocksData, compressed, _newBlocksExtraData)
     increase_totalCommittedPriorityRequests(_lastCommittedBlockData.priority_operations)
-    let (n_elements : felt, elements : felt*) = convert_stored_block_info_to_array(_lastCommittedBlockData)
-    let (new_stored_block_hash : Uint256) = hash_array_to_uint256(n_elements, elements)
+    let (bytes : Bytes) = writeStoredBlockInfoForHash(_lastCommittedBlockData)
+    let (new_stored_block_hash : Uint256) = hashBytes(bytes)
     set_storedBlockHashes(_lastCommittedBlockData.block_number, new_stored_block_hash)
 
 
@@ -2090,13 +2103,18 @@ func check_onchain_op{
             if chain_id == CHAIN_ID:
                 let (cpk_op : ChangePubKey) = read_changepubkey_pubdata(op_pubdata)
                 let (_, processable_pubdata : Bytes) = read_bytes(op_pubdata, 0, op_pubdata.size)
-                if eth_witness.size == 0 :
-                    let (af : Uint256) = get_authFacts((cpk_op.owner, cpk_op.nonce))
-                    # TODO: keccak
-                    return (priority_operations_processed=0, op_pubdata=op_pubdata, processable_pubdata=processable_pubdata)
-                else:
+                if eth_witness.size != 0 :
                     let (valid) = verify_changepubkey(eth_witness, cpk_op)
                     with_attr error_message("k0"):
+                        assert valid = 1
+                    end
+                    return (priority_operations_processed=0, op_pubdata=op_pubdata, processable_pubdata=processable_pubdata)
+                else:
+                    let (old_hash : Uint256) = get_authFacts((cpk_op.owner, cpk_op.nonce))
+                    let (bytes : Bytes) = create_bytes_from_uint160(cpk_op.pubKeyHash)
+                    let (hash : Uint256) = hashBytes(bytes)
+                    let (valid) = uint256_eq(old_hash, hash)
+                    with_attr error_message("k1"):
                         assert valid = 1
                     end
                     return (priority_operations_processed=0, op_pubdata=op_pubdata, processable_pubdata=processable_pubdata)
@@ -2268,15 +2286,11 @@ func executeWithdraw{
         tempvar bitwise_ptr = bitwise_ptr
         tempvar range_check_ptr = range_check_ptr
     else:
-        # TODO: keccak
-        # let (packed : felt*) = alloc()
-        # assert packed[0] = op.owner
-        # assert packed[1] = op.tokenId
-        # assert packed[2] = op.amount
-        # assert packed[3] = op.fastWithdrawFeeRate
-        # assert packed[4] = op.nonce
-        # let (fwHash : Uint256) = hash_array_to_uint256(5, packed)
-        let fwHash = Uint256(op.nonce, 0)  # This is just for test without keccak
+        let (bytes : Bytes) = writeWithdrawPubdataForHash(
+            op.owner, op.tokenId, op.amount,
+            op.fastWithdrawFeeRate, op.nonce
+        )
+        let (fwHash : Uint256) = hashBytes(bytes)
         let (accepter) = get_accept((op.accountId, fwHash))
         if accepter == 0:
             # receiver act as a accepter
@@ -2623,6 +2637,7 @@ func _checkAccept{
     withdrawFeeRate : felt,
     nonce : felt
 ) -> (amountReceive : felt, hash : Uint256, tokenAddress : felt):
+    alloc_locals
     active()
 
     # accepter and receiver MUST be set and MUST not be the same
@@ -2655,9 +2670,11 @@ func _checkAccept{
     end
 
     # accept tx may be later than block exec tx(with user withdraw op)
-    # TODO: keccak
-    # hash = keccak256(abi.encodePacked(receiver, tokenId, amount, withdrawFeeRate, nonce));
-    let hash = Uint256(nonce, 0)    # This is just for test without keccak
+    let (bytes : Bytes) = writeWithdrawPubdataForHash(
+        receiver, tokenId, amount,
+        withdrawFeeRate, nonce
+    )
+    let (hash : Uint256) = hashBytes(bytes)
     with_attr error_message("H6"):
         let (accepter) = get_accept((accountId, hash))
         assert accepter = 0

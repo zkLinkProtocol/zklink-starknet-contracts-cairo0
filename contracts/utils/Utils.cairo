@@ -128,6 +128,36 @@ func concatTwoHash{range_check_ptr, bitwise_ptr : BitwiseBuiltin*}(a : Uint256, 
     return (hash)
 end
 
+func hashBytes{
+    range_check_ptr,
+    bitwise_ptr : BitwiseBuiltin*
+}(bytes : Bytes) -> (hash : Uint256):
+    alloc_locals
+
+    let (local keccak_ptr_start : felt*) = alloc()
+    let keccak_ptr = keccak_ptr_start
+
+    let (hash : Uint256) = keccak_bytes_bigend{keccak_ptr=keccak_ptr}(bytes)
+    finalize_keccak(keccak_ptr_start=keccak_ptr_start, keccak_ptr_end=keccak_ptr)
+
+    return (hash)
+end
+
+func hashUint256s{
+    range_check_ptr,
+    bitwise_ptr : BitwiseBuiltin*
+}(data_len : felt, data : Uint256*) -> (hash : Uint256):
+    alloc_locals
+
+    let (local keccak_ptr_start : felt*) = alloc()
+    let keccak_ptr = keccak_ptr_start
+
+    let (hash) = keccak_uint256s_bigend{keccak_ptr=keccak_ptr}(data_len, data)
+    finalize_keccak(keccak_ptr_start=keccak_ptr_start, keccak_ptr_end=keccak_ptr)
+
+    return (hash)
+end
+
 func hashBytesToBytes20{
     range_check_ptr,
     bitwise_ptr : BitwiseBuiltin*

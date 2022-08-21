@@ -3,11 +3,11 @@
 
 from starkware.cairo.common.alloc import alloc
 from starkware.cairo.common.cairo_builtins import BitwiseBuiltin
-from starkware.cairo.common.math import unsigned_div_rem
+from starkware.cairo.common.math import unsigned_div_rem, split_felt
 from starkware.cairo.common.pow import pow
 from starkware.cairo.common.uint256 import Uint256, uint256_eq
 from contracts.utils.Utils import hashBytesToBytes20, deserialize_address
-from contracts.utils.Bytes import Bytes, read_felt, read_uint256, join_bytes, BYTES_PER_FELT, read_address
+from contracts.utils.Bytes import Bytes, read_felt, read_uint256, join_bytes, BYTES_PER_FELT, read_address, split_felt_to_two
 
 # ZKLink circuit operation type
 struct OpType:
@@ -235,6 +235,46 @@ struct Withdraw:
     member owner : felt                 # 32 byte, the address to receive token
     member nonce : felt                 # uint32, zero means normal withdraw, not zero means fast withdraw and the value is the account nonce
     member fastWithdrawFeeRate : felt   # uint16, fast withdraw fee rate taken by accepter
+end
+
+# Serilize Withdraw: owner, tokenId, amount, fastWithdrawFeeRate, nonce
+func writeWithdrawPubdataForHash{
+    range_check_ptr
+}(
+    owner : felt,
+    tokenId : felt,
+    amount : felt,
+    fastWithdrawFeeRate : felt,
+    nonce : felt
+) -> (bytes : Bytes):
+    alloc_locals
+    let (local data : felt*) = alloc()
+
+    # bytes of Withdraw member (56 bytes)
+    # owner :               32
+    # tokenId :             2
+    # amount :              16
+    # fastWithdrawFeeRate : 2
+    # nonce :               4
+    
+    # data[0] = owner.high
+    # data[1] = owner.low
+    let (owner_high, owner_low) = split_felt(owner)
+    assert data[0] = owner_high
+    assert data[1] = owner_low
+    # data[2] = tokenId + amount(14 bytes)
+    let (amount_left, local amount_right) = split_felt_to_two(16, amount, 14)
+    let (value) = join_bytes(tokenId, amount_left, 14)
+    assert data[2] = value
+    # data[3] = amount(2 bytes) + fastWithdrawFeeRate + nonce
+    let (value) = join_bytes(amount_right, fastWithdrawFeeRate, 2)
+    let (value) = join_bytes(value, nonce, 4)
+    assert data[3] = value
+    return (Bytes(
+        size=56,
+        data_length=4,
+        data=data
+    ))
 end
 
 # Deserialize Withdraw pubdata

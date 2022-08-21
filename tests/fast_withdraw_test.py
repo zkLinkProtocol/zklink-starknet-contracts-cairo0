@@ -276,10 +276,10 @@ async def test_fast_withdraw_and_accept_not_finish(after_initialized):
     )
     aliceBalance1 = from_uint(tx_exce_info.result.response)
     assert aliceBalance1 - aliceBalance0 == amount
-    # TODO
-    # hash = calAcceptHash([owner, tokenId, amount, fastWithdrawFeeRate, nonce])
-    # tx_exce_info = await signer.send_transaction(
-    #     default_sender, zklink.contract_address, 'getAccepter',
-    #     [accountId, *to_uint(hash)]
-    # )
-    # assert tx_exce_info.result.response == [owner]
+
+    hash = calAcceptHash([owner, tokenId, amount, fastWithdrawFeeRate, nonce])
+    tx_exce_info = await signer.send_transaction(
+        default_sender, zklink.contract_address, 'getAccepter',
+        [accountId, *to_uint(hash)]
+    )
+    assert tx_exce_info.result.response == [owner]

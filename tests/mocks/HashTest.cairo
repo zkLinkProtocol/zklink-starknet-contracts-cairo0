@@ -16,12 +16,12 @@ from contracts.utils.Utils import (
     concatHash,
     concatTwoHash,
     hashBytesToBytes20,
-    keccak_bytes_bigend,
-    keccak_uint256s_bigend
+    hashBytes,
+    hashUint256s
 )
 
 @view
-func testKeccakBytes{
+func testHashBytes{
     syscall_ptr : felt*,
     bitwise_ptr : BitwiseBuiltin*,
     range_check_ptr
@@ -34,29 +34,17 @@ func testKeccakBytes{
         data=data
     )
 
-    let (local keccak_ptr_start : felt*) = alloc()
-    let keccak_ptr = keccak_ptr_start
-
-    let (hash) = keccak_bytes_bigend{keccak_ptr=keccak_ptr}(bytes)
-    finalize_keccak(keccak_ptr_start=keccak_ptr_start, keccak_ptr_end=keccak_ptr)
-
+    let (hash) = hashBytes(bytes)
     return (hash)
 end
 
 @view
-func testKeccakUint256s{
+func testHashUint256s{
     syscall_ptr : felt*,
     bitwise_ptr : BitwiseBuiltin*,
     range_check_ptr
 }(data_len : felt, data : Uint256*) -> (hash : Uint256):
-    alloc_locals
-
-    let (local keccak_ptr_start : felt*) = alloc()
-    let keccak_ptr = keccak_ptr_start
-
-    let (hash) = keccak_uint256s_bigend{keccak_ptr=keccak_ptr}(data_len, data)
-    finalize_keccak(keccak_ptr_start=keccak_ptr_start, keccak_ptr_end=keccak_ptr)
-
+    let (hash) = hashUint256s(data_len, data)
     return (hash)
 end
 

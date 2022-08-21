@@ -25,8 +25,8 @@ func split_felt_to_two{
 
     let base = input_bytes - at
 
-    let (move1) = pow(256, base)
-    let (left, right) = unsigned_div_rem(input, move1)
+    let (div) = pow(256, base)
+    let (left, right) = unsigned_div_rem(input, div)
     
     return (left, right)
 end
@@ -369,4 +369,21 @@ func create_empty_bytes() -> (bytes : Bytes):
     let (empty_data : felt*) = alloc()
     assert empty_data[0] = 0
     return (Bytes(size=0, data_length=0, data=empty_data))
+end
+
+func create_bytes_from_uint160{range_check_ptr}(num : felt) -> (bytes : Bytes):
+    alloc_locals
+
+    let (data : felt*) = alloc()
+
+    let (div) = pow(256, 4)
+    let (first, last) = unsigned_div_rem(num, div)
+    assert data[0] = first
+    assert data[1] = last
+
+    return (Bytes(
+        size=20,
+        data_length=2,
+        data=data
+    ))
 end

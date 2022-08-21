@@ -61,7 +61,7 @@ async def contract_factory(contract_classes):
     return contract, account1, account2
     
 @pytest.mark.asyncio
-async def test_keccakBytes(contract_factory):
+async def test_hashBytes(contract_factory):
     contract, account1, account2 = contract_factory
     
     ethId = 1
@@ -73,7 +73,7 @@ async def test_keccakBytes(contract_factory):
     pubdata_len, pubdata = getDepositPubdata(example)
     hash = getDepositPubdataHash32(example)
 
-    tx_info = await contract.testKeccakBytes(pubdata_len, pubdata).call()
+    tx_info = await contract.testHashBytes(pubdata_len, pubdata).call()
     assert from_uint(tx_info.result[0]) == hash
 
     token4Id = 4
@@ -82,11 +82,11 @@ async def test_keccakBytes(contract_factory):
 
     pubdata_len, pubdata = getFullExitPubdata(example)
     hash = getFullExitPubdataHash32(example)
-    tx_info = await contract.testKeccakBytes(pubdata_len, pubdata).call()
+    tx_info = await contract.testHashBytes(pubdata_len, pubdata).call()
     assert from_uint(tx_info.result[0]) == hash
 
 @pytest.mark.asyncio
-async def test_keccakUint256s(contract_factory):
+async def test_hashUint256s(contract_factory):
     contract, account1, account2 = contract_factory
 
     data = [account1.contract_address, account2.contract_address] * 10
@@ -102,7 +102,7 @@ async def test_keccakUint256s(contract_factory):
             data),
         'big'
     )
-    tx_info = await contract.testKeccakUint256s([to_uint(x) for x in data]).call()
+    tx_info = await contract.testHashUint256s([to_uint(x) for x in data]).call()
     assert from_uint(tx_info.result[0]) == hash
 
 @pytest.mark.asyncio

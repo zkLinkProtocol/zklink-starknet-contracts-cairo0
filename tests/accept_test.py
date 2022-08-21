@@ -236,17 +236,16 @@ async def test_accept_token_should_failed(after_initialized):
         reverted_with='H5'
     )
     
-    # TODO: finish keccak adapt should uncomment this line
-    # hash = to_uint(calAcceptHash([bob.contract_address, eth.tokenId, 100, 100, 1]))
+    hash = calAcceptHash([bob.contract_address, eth.tokenId, 100, 100, 1])
     await signer.send_transaction(
         default_sender, zklink.contract_address, 'setAccepter',
-        [fwAid, *uint(1), alice.contract_address]
+        [fwAid, *to_uint(hash), alice.contract_address]
     )
     
     await assert_revert(
         signer.send_transaction(
             alice, zklink.contract_address, 'acceptERC20',
-            [alice.contract_address, fwAid, bob.contract_address, eth.tokenId, 100, 20, 1, 100]
+            [alice.contract_address, fwAid, bob.contract_address, eth.tokenId, 100, 100, 1, 100]
         ),
         reverted_with='H6'
     )
@@ -292,12 +291,11 @@ async def test_accept_standard_erc20_should_success(after_initialized):
         data=[bob.contract_address, fwAid, alice.contract_address, token2.tokenId, amountReceive, amountReceive]
     )
     
-    # TODO:
-    # hash = calAcceptHash([alice.contract_address, token2.tokenId, amount, feeRate, nonce])
-    # tx_exce_info = await signer.send_transaction(
-    #     default_sender, zklink.contract_address, 'getAccepter',
-    #     [fwAid, *to_uint(hash)]
-    # )
+    hash = calAcceptHash([alice.contract_address, token2.tokenId, amount, feeRate, nonce])
+    tx_exce_info = await signer.send_transaction(
+        default_sender, zklink.contract_address, 'getAccepter',
+        [fwAid, *to_uint(hash)]
+    )
     tx_exce_info = await signer.send_transaction(
         default_sender, token2.tokenAddress, 'balanceOf',
         [alice.contract_address]
