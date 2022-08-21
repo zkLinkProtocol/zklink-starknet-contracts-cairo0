@@ -370,12 +370,3 @@ func create_empty_bytes() -> (bytes : Bytes):
     assert empty_data[0] = 0
     return (Bytes(size=0, data_length=0, data=empty_data))
 end
-
-# func append_uint256_to_bytes{
-#     range_check_ptr
-# }(bytes : Bytes, num : Uint256) -> (new_bytes : Bytes):
-#     alloc_locals
-
-#     local low = num.low
-#     local high = num.high
-# end

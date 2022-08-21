@@ -47,7 +47,7 @@ from contracts.utils.Bytes import (
     read_uint256,
     read_uint256_array,
     read_bytes,
-    FELT_MAX_BYTES,
+    BYTES_PER_FELT,
 )
 
 from contracts.Zklink import (

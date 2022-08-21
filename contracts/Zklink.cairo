@@ -77,7 +77,8 @@ from contracts.utils.Utils import (
     min_felt,
     concatHash,
     concatTwoHash,
-    hashBytesToBytes20
+    hashBytesToBytes20,
+    keccak_bytes_bigend
 )
 
 from contracts.utils.Config import (
@@ -2226,39 +2227,28 @@ func _executeOneBlock{
     if op_type == OpType.Withdraw:
         let (withdraw : Withdraw) = read_withdraw_pubdata(pubData)
         executeWithdraw(withdraw)
-        tempvar syscall_ptr = syscall_ptr
-        tempvar pedersen_ptr = pedersen_ptr
-        tempvar bitwise_ptr = bitwise_ptr
-        tempvar range_check_ptr = range_check_ptr
+        let (hash : Uint256) = concatHash(before_hash, pubData)
+        return (hash)
     else:
         if op_type == OpType.ForcedExit:
             let (forcedexit : ForcedExit) = read_forcedexit_pubdata(pubData)
             withdrawOrStore(forcedexit.tokenId, forcedexit.target, forcedexit.amount)
-            tempvar syscall_ptr = syscall_ptr
-            tempvar pedersen_ptr = pedersen_ptr
-            tempvar bitwise_ptr = bitwise_ptr
-            tempvar range_check_ptr = range_check_ptr
+            let (hash : Uint256) = concatHash(before_hash, pubData)
+            return (hash)
         else:
             if op_type == OpType.FullExit:
                 let (fullexit : FullExit) = read_fullexit_pubdata(pubData)
                 let (owner) = address_to_felt(fullexit.owner)
                 withdrawOrStore(fullexit.tokenId, owner, fullexit.amount)
-                tempvar syscall_ptr = syscall_ptr
-                tempvar pedersen_ptr = pedersen_ptr
-                tempvar bitwise_ptr = bitwise_ptr
-                tempvar range_check_ptr = range_check_ptr
+                let (hash : Uint256) = concatHash(before_hash, pubData)
+                return (hash)
             else:
                 # TODO : revert?
-                tempvar syscall_ptr = syscall_ptr
-                tempvar pedersen_ptr = pedersen_ptr
-                tempvar bitwise_ptr = bitwise_ptr
-                tempvar range_check_ptr = range_check_ptr
+                let (hash : Uint256) = concatHash(before_hash, pubData)
+                return (hash)
             end
         end
     end
-
-    let (hash : Uint256) = concatHash(before_hash, pubData)
-    return (hash)
 end
 
 # Execute withdraw operation

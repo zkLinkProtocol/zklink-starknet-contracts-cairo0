@@ -7,142 +7,21 @@ from starkware.cairo.common.alloc import alloc
 from starkware.cairo.common.math import unsigned_div_rem, assert_lt
 from starkware.cairo.common.math_cmp import is_in_range
 from starkware.cairo.common.pow import pow
-from contracts.utils.Bytes import Bytes, FELT_MAX_BYTES
+from contracts.utils.Bytes import (
+    Bytes,
+    BYTES_PER_FELT
+)
 
-
-func keccak_bytes_bigend{
-    range_check_ptr,
-    bitwise_ptr : BitwiseBuiltin*,
-    keccak_ptr : felt*
-}(bytes : Bytes) -> (res : Uint256):
-    alloc_locals
-    let (inputs) = alloc()
-    let inputs_start = inputs
-
-    keccak_add_bytes{inputs=inputs}(0, bytes)
-    return keccak_bigend(inputs_start, bytes.size)
-end
-
-func keccak_add_bytes{
-    range_check_ptr,
-    bitwise_ptr : BitwiseBuiltin*,
-    inputs : felt*
-}(index : felt, bytes : Bytes):
-    if index == bytes.data_length:
-        return ()
-    end
-
-    keccak_add_data(index, bytes)
-    return keccak_add_bytes(index + 1, bytes)
-end
-
-# reverse unaligned word from big endian to liitle endian
-func unaligned_word_reverse_endian{range_check_ptr, bitwise_ptr : BitwiseBuiltin*}(num : felt, size : felt) -> (res : felt):
-    alloc_locals
-
-    assert_lt(0, size)
-    assert_lt(size, 16)
-
-    let (local num_reversed) = word_reverse_endian(num)
-    tempvar padding = 16 - size
-
-    let (div) = pow(256, padding)
-    let (res, _) = unsigned_div_rem(num_reversed, div)
-    return (res)
-end
-
-func keccak_add_aligned_data{
-    range_check_ptr,
-    bitwise_ptr : BitwiseBuiltin*,
-    inputs : felt*
-}(index : felt, bytes : Bytes):
-    alloc_locals
-
-    let (local num_reversed) = word_reverse_endian(bytes.data[index])
-    let (div) = pow(256, 8)
-    let (right, left) = unsigned_div_rem(num_reversed, div)
-
-    assert inputs[0] = left
-    assert inputs[1] = right
-    let inputs = inputs + 2
-
-    return ()
-end
-
-func keccak_add_unaligned_data{
-    range_check_ptr,
-    bitwise_ptr : BitwiseBuiltin*,
-    inputs : felt*
-}(index : felt, bytes : Bytes):
-    alloc_locals
-
-    let (_, local size) = unsigned_div_rem(bytes.size, bytes.bytes_per_felt)
-    let (local num_reversed) = unaligned_word_reverse_endian(bytes.data[index], size)
-    let (only_one) = is_in_range(size, 1, 9)
-
-    if only_one == 1:
-        assert inputs[0] = num_reversed
-        return ()
-    else:
-        let (div) = pow(256, 8)
-        let (right, left) = unsigned_div_rem(num_reversed, div)
-
-        assert inputs[0] = left
-        assert inputs[1] = right
-        let inputs = inputs + 2
-        return ()
-    end
-end
-
-func keccak_add_data{
-    range_check_ptr,
-    bitwise_ptr : BitwiseBuiltin*,
-    inputs : felt*
-}(index : felt, bytes : Bytes):
-    if index == bytes.data_length - 1:
-        let (_, unaligned) = unsigned_div_rem(bytes.size, bytes.bytes_per_felt)
-        if unaligned == 0:
-            return keccak_add_aligned_data(index, bytes)
-        else:
-            return keccak_add_unaligned_data(index, bytes)  
-        end
-    else:
-        return keccak_add_aligned_data(index, bytes)
-    end
-end
+from contracts.utils.Utils import (
+    concatHash,
+    concatTwoHash,
+    hashBytesToBytes20,
+    keccak_bytes_bigend,
+    keccak_uint256s_bigend
+)
 
 @view
-func testReverse{range_check_ptr, bitwise_ptr : BitwiseBuiltin*}(num : felt, size : felt) -> (res : felt):
-    let (res) = unaligned_word_reverse_endian(num, size)
-    return (res)
-end
-
-@view
-func testAddBytes{
-    syscall_ptr : felt*,
-    bitwise_ptr : BitwiseBuiltin*,
-    range_check_ptr
-}(size : felt, data_len : felt, data : felt*) -> (input_len : felt, input : felt*):
-    alloc_locals
-
-    local bytes : Bytes = Bytes(
-        _start=0,
-        bytes_per_felt=FELT_MAX_BYTES,
-        size=size,
-        data_length=data_len,
-        data=data
-    )
-
-    let (inputs) = alloc()
-    let inputs_start = inputs
-
-    keccak_add_bytes{inputs=inputs}(0, bytes)
-
-    return (2, inputs_start)
-end
-
-@view
-func computeBytesHash{
+func testKeccakBytes{
     syscall_ptr : felt*,
     bitwise_ptr : BitwiseBuiltin*,
     range_check_ptr
@@ -150,8 +29,6 @@ func computeBytesHash{
     alloc_locals
 
     local bytes : Bytes = Bytes(
-        _start=0,
-        bytes_per_felt=FELT_MAX_BYTES,
         size=size,
         data_length=data_len,
         data=data
@@ -163,5 +40,66 @@ func computeBytesHash{
     let (hash) = keccak_bytes_bigend{keccak_ptr=keccak_ptr}(bytes)
     finalize_keccak(keccak_ptr_start=keccak_ptr_start, keccak_ptr_end=keccak_ptr)
 
+    return (hash)
+end
+
+@view
+func testKeccakUint256s{
+    syscall_ptr : felt*,
+    bitwise_ptr : BitwiseBuiltin*,
+    range_check_ptr
+}(data_len : felt, data : Uint256*) -> (hash : Uint256):
+    alloc_locals
+
+    let (local keccak_ptr_start : felt*) = alloc()
+    let keccak_ptr = keccak_ptr_start
+
+    let (hash) = keccak_uint256s_bigend{keccak_ptr=keccak_ptr}(data_len, data)
+    finalize_keccak(keccak_ptr_start=keccak_ptr_start, keccak_ptr_end=keccak_ptr)
+
+    return (hash)
+end
+
+@view
+func testconcatTwoHash{
+    syscall_ptr : felt*,
+    bitwise_ptr : BitwiseBuiltin*,
+    range_check_ptr
+}(a : Uint256, b : Uint256) -> (hash : Uint256):
+    let (hash) = concatTwoHash(a, b)
+    return (hash)
+end
+
+@view
+func testconcatHash{
+    syscall_ptr : felt*,
+    bitwise_ptr : BitwiseBuiltin*,
+    range_check_ptr
+}(hash : Uint256, size : felt, data_len : felt, data : felt*) -> (hash : Uint256):
+    alloc_locals
+
+    local bytes : Bytes = Bytes(
+        size=size,
+        data_length=data_len,
+        data=data
+    )
+    let (hash) = concatHash(hash, bytes)
+    return (hash)
+end
+
+@view
+func testhashBytesToBytes20{
+    syscall_ptr : felt*,
+    bitwise_ptr : BitwiseBuiltin*,
+    range_check_ptr
+}(size : felt, data_len : felt, data : felt*) -> (hash : felt):
+    alloc_locals
+
+    local bytes : Bytes = Bytes(
+        size=size,
+        data_length=data_len,
+        data=data
+    )
+    let (hash) = hashBytesToBytes20(bytes)
     return (hash)
 end

@@ -13,7 +13,7 @@ from utils import (
     to_uint,
     from_uint
 )
-from zklink_utils import Token, getDepositPubdataHash, getFullExitPubdataHash
+from zklink_utils import Token, getDepositPubdataHash20, getFullExitPubdataHash20
 
 
 signer = MockSigner(123456789987654321)
@@ -327,7 +327,7 @@ async def test_deposit_standard_erc20_should_success(after_initialized):
 
     # TODO
     # hashedPubdata = tx_exce_info.result.response[0]
-    # encodePubdata = getDepositPubdataHash([1, 0, subAccountId, eth.tokenId, eth.tokenId, amount, to])
+    # encodePubdata = getDepositPubdataHash20([1, 0, subAccountId, eth.tokenId, eth.tokenId, amount, to])
     # assert hashedPubdata == encodePubdata
 
 
@@ -379,7 +379,7 @@ async def test_deposit_standard_erc20_with_mapping_should_success(after_initiali
     )
     # TODO
     # hashedPubdata = tx_exce_info.result.response[0]
-    # encodePubdata = getDepositPubdataHash([1, 0, subAccountId, token2.tokenId, token2.tokenId, amount, to])
+    # encodePubdata = getDepositPubdataHash20([1, 0, subAccountId, token2.tokenId, token2.tokenId, amount, to])
     # assert hashedPubdata == encodePubdata
 
 
@@ -429,7 +429,7 @@ async def test_deposit_nonstandard_erc20_should_success(after_initialized):
     )
     # TODO
     # hashedPubdata = tx_exce_info.result.response[0]
-    # encodePubdata = getDepositPubdataHash([1, 0, subAccountId, token3.tokenId, token3.tokenId, amount - receiverFee, to])
+    # encodePubdata = getDepositPubdataHash20([1, 0, subAccountId, token3.tokenId, token3.tokenId, amount - receiverFee, to])
     # assert hashedPubdata == encodePubdata
 
 
@@ -522,7 +522,7 @@ async def test_fullexit_shuold_success(after_initialized):
     )
     # TODO
     # hashedPubdata = tx_exce_info.result.response[0]
-    # encodePubdata = getFullExitPubdataHash([1, accountId, subAccountId, default_sender.contract_address, eth.tokenId, eth.tokenId, 0])
+    # encodePubdata = getFullExitPubdataHash20([1, accountId, subAccountId, default_sender.contract_address, eth.tokenId, eth.tokenId, 0])
     # assert hashedPubdata == encodePubdata
 
 
@@ -544,5 +544,5 @@ async def test_fullexit_with_mapping_shuold_success(after_initialized):
     )
     # TODO
     # hashedPubdata = tx_exce_info.result.response[0]
-    # encodePubdata = getFullExitPubdataHash([1, accountId, subAccountId, default_sender.contract_address, token4.tokenId, token4.mappingToken, 0])
+    # encodePubdata = getFullExitPubdataHash20([1, accountId, subAccountId, default_sender.contract_address, token4.tokenId, token4.mappingToken, 0])
     # assert hashedPubdata == encodePubdata
