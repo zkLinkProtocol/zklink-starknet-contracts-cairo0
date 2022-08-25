@@ -4,10 +4,22 @@
 from starkware.cairo.common.alloc import alloc
 from starkware.cairo.common.cairo_builtins import BitwiseBuiltin
 from starkware.cairo.common.math import unsigned_div_rem, split_felt
-from starkware.cairo.common.pow import pow
 from starkware.cairo.common.uint256 import Uint256, uint256_eq
-from contracts.utils.Utils import hashBytesToBytes20, deserialize_address
+from starkware.starknet.common.syscalls import get_contract_address
+from contracts.utils.Utils import hashBytesToBytes20, deserialize_address, hashBytes, hashUint256s, address_to_felt
 from contracts.utils.Bytes import Bytes, read_felt, read_uint256, join_bytes, BYTES_PER_FELT, read_address, split_felt_to_two
+from contracts.utils.Pow2 import pow2
+from contracts.utils.Config import (
+    CHANGE_PUBKEY_DOMAIN_SEPARATOR_LOW,
+    CHANGE_PUBKEY_DOMAIN_SEPARATOR_HIGH,
+    CHANGE_PUBKEY_HASHED_NAME_HIGH,
+    CHANGE_PUBKEY_HASHED_NAME_LOW,
+    CHANGE_PUBKEY_HASHED_VERSION_HIGH,
+    CHANGE_PUBKEY_HASHED_VERSION_LOW,
+    CHANGE_PUBKEY_TYPE_HASH_HIGH,
+    CHANGE_PUBKEY_TYPE_HASH_LOW,
+    CHAIN_ID
+)
 
 # ZKLink circuit operation type
 struct OpType:
@@ -42,7 +54,7 @@ struct PriorityOperation:
     member opType : felt           # priority operation type
 end
 
-# Deposit Operation
+# Deposit Operation, 58 bytes
 struct DepositOperation:
     member chain_id : felt          # deposit from which chain that identified by l2 chain id
     member account_id : felt        # the account id bound to the owner address, ignored at serialization and will be set when the block is submitted
@@ -83,7 +95,7 @@ func writeDepositPubdataForPriorityQueue{range_check_ptr}(op : DepositOperation)
     alloc_locals
     let (local data : felt*) = alloc()
 
-    let (amount_div) = pow(256, 11)
+    let (amount_div) = pow2(88)
     let (local amount1, local amount2) = unsigned_div_rem(op.amount, amount_div)
 
     let (_, deowner : felt*) = deserialize_address(op.owner, 5, 16, 11)
@@ -137,7 +149,7 @@ end
 
 const PACKED_FULLEXIT_PUBDATA_BYTES = OP_TYPE_BYTES + CHAIN_BYTES + ACCOUNT_ID_BYTES + SUB_ACCOUNT_ID_BYTES + TOKEN_BYTES * 2 + AMOUNT_BYTES + ADDRESS_BYTES
 
-# FullExit Operation
+# FullExit Operation, 58 bytes
 struct FullExit:
     member chainId : felt       # uint8, withdraw to which chain that identified by l2 chain id
     member accountId : felt     # uint32, the account id to withdraw from
@@ -226,7 +238,7 @@ func writeFullExitPubdataForPriorityQueue{range_check_ptr}(op : FullExit) -> (by
     ))
 end
 
-# Withdraw operation, 49 bytes(50 bytes wiht op_type)
+# Withdraw operation, 61 bytes(62 bytes wiht op_type)
 struct Withdraw:
     member chainId : felt               # uint8, which chain the withdraw happened
     member accountId : felt             # uint32, the account id to withdraw from
@@ -301,6 +313,7 @@ func read_withdraw_pubdata{range_check_ptr}(op_pubdata : Bytes) -> (parsed : Wit
     return (parsed)
 end
 
+# 51 bytes
 struct ForcedExit:
     member chainId : felt   # uint8, which chain the force exit happened
     member tokenId : felt   # uint16, the token that to withdraw
@@ -326,12 +339,12 @@ func read_forcedexit_pubdata{range_check_ptr}(op_pubdata : Bytes) -> (parsed : F
     return (parsed)
 end
 
-
+# 61 bytes
 struct ChangePubKey:
     member chainId : felt    # 1 byte, which chain to verify(only one chain need to verify for gas saving)
     member accountId : felt  # 4 byte, the account that to change pubkey
     member pubKeyHash : felt # 20 byte, hash of the new rollup pubkey
-    member owner : felt   # 32 byte, the owner that own this account
+    member owner : felt      # 32 byte, the owner that own this account
     member nonce : felt      # 4 byte, the account nonce
 end
 
@@ -354,3 +367,130 @@ func read_changepubkey_pubdata{range_check_ptr}(op_pubdata : Bytes) -> (parsed :
     return (parsed)
 end
 
+func getDomainSeparatorForEC{
+    syscall_ptr : felt*,
+    bitwise_ptr : BitwiseBuiltin*,
+    range_check_ptr
+}() -> (domainSeparator : Uint256):
+    alloc_locals
+    
+    let (data : Uint256*) = alloc()
+    assert data[0] = Uint256(CHANGE_PUBKEY_DOMAIN_SEPARATOR_LOW, CHANGE_PUBKEY_DOMAIN_SEPARATOR_HIGH)
+    assert data[1] = Uint256(CHANGE_PUBKEY_HASHED_NAME_LOW, CHANGE_PUBKEY_HASHED_NAME_HIGH)
+    assert data[2] = Uint256(CHANGE_PUBKEY_HASHED_VERSION_LOW, CHANGE_PUBKEY_HASHED_VERSION_HIGH)
+    assert data[3] = Uint256(CHAIN_ID, 0)
+    let (contract_address) = get_contract_address()
+    let (contract_address_high, contract_address_low) = split_felt(contract_address)
+    assert data[4] = Uint256(contract_address_low, contract_address_high)
+
+    let (domainSeparator) = hashUint256s(5, data)
+    return (domainSeparator)
+end
+
+func getStructHashForEC{
+    bitwise_ptr : BitwiseBuiltin*,
+    range_check_ptr
+}(change_pk : ChangePubKey) -> (structHash : Uint256):
+    alloc_locals
+    
+    let (data : felt*) = alloc()
+    # data[0] = CHANGE_PUBKEY_TYPE_HASH_HIGH
+    assert data[0] = CHANGE_PUBKEY_TYPE_HASH_HIGH
+    # data[1] = CHANGE_PUBKEY_TYPE_HASH_LOW
+    assert data[1] = CHANGE_PUBKEY_TYPE_HASH_LOW
+    # data[2] = pubKeyHash(16 bytes)
+    let (pubKeyHash1, local pubKeyHash2) = split_felt_to_two(20, change_pk.pubKeyHash, 16)
+    assert data[2] = pubKeyHash1
+    # data[3] = pubKeyHash(4 bytes) + nonce(4 bytes) + accountId(4 bytes)
+    let (value) = join_bytes(pubKeyHash2, change_pk.nonce, 4)
+    let (value) = join_bytes(value, change_pk.accountId, 4)
+    assert data[3] = value
+
+    let bytes = Bytes(size=60, data_length=4, data=data)
+    let (structHash : Uint256) = hashBytes(bytes)
+    return (structHash)
+end
+
+func getMessageHashForEC{
+    bitwise_ptr : BitwiseBuiltin*,
+    range_check_ptr
+}(domainSeparator : Uint256, structHash : Uint256) -> (messageHash : Uint256):
+    alloc_locals
+
+    let (data : felt*) = alloc()
+    # data[0] = 0x1901 + domainSeparator.high(14 bytes)
+    let (domainSeparator_high1, local domainSeparator_high2) = split_felt_to_two(16, domainSeparator.high, 14)
+    let (value) = join_bytes(0x1901, domainSeparator_high1, 14)
+    assert data[0] = value
+    # data[1] = domainSeparator.high(2 bytes) + domainSeparator.low(14 bytes)
+    let (domainSeparator_low1, local domainSeparator_low2) = split_felt_to_two(16, domainSeparator.low, 14)
+    let (value) = join_bytes(domainSeparator_high2, domainSeparator_low1, 14)
+    assert data[1] = value
+    # data[2] = domainSeparator.low(2 bytes) + structHash.high(14 bytes)
+    let (structHash_high1, local structHash_high2) = split_felt_to_two(16, structHash.high, 14)
+    let (value) = join_bytes(domainSeparator_low2, structHash_high1, 14)
+    assert data[2] = value
+    # data[3] = structHash.high(2 bytes) + structHash.low(14 bytes)
+    let (structHash_low1, local structHash_low2) = split_felt_to_two(16, structHash.low, 14)
+    let (value) = join_bytes(structHash_high2, domainSeparator_low1, 14)
+    assert data[3] = value
+    # data[4] = structHash.low(2 bytes)
+    assert data[4] = structHash_low2
+
+    let (messageHash : Uint256) = hashBytes(Bytes(size=66, data_length=5, data=data))
+    return (messageHash)
+end
+
+func getSaltForCREATE2{
+    bitwise_ptr : BitwiseBuiltin*,
+    range_check_ptr
+}(saltArg : Uint256, change_pk : ChangePubKey) -> (salt : Uint256):
+    alloc_locals
+
+    let (salt_data : felt*) = alloc()
+    assert salt_data[0] = saltArg.high
+    assert salt_data[1] = saltArg.low
+    assert salt_data[2] = change_pk.pubKeyHash
+
+    let (salt : Uint256) = hashBytes(Bytes(size=52, data_length=3, data=salt_data))
+    return (salt)
+end
+
+func getRecoveredAddrForCREATE2{
+    bitwise_ptr : BitwiseBuiltin*,
+    range_check_ptr
+}(creatorAddress : Uint256, salt : Uint256, codeHash : Uint256) -> (recoveredAddress : felt):
+    alloc_locals
+
+    let (data : felt*) = alloc()
+    # data[0] = 0xff + creatorAddress_high(15 bytes)
+    let (creatorAddress_high1, local creatorAddress_high2) = split_felt_to_two(16, creatorAddress.high, 15)
+    let (value) = join_bytes(0xff, creatorAddress_high1, 15)
+    assert data[0] = value
+    # data[1] = creatorAddress_high(1 bytes) + creatorAddress_low(15 bytes)
+    let (creatorAddress_low1, local creatorAddress_low2) = split_felt_to_two(16, creatorAddress.low, 15)
+    let (value) = join_bytes(creatorAddress_high2, creatorAddress_low1, 15)
+    assert data[1] = value
+    # data[2] = creatorAddress_low(1 bytes) + salt_high(15 bytes)
+    let (salt_high1, local salt_high2) = split_felt_to_two(16, salt.high, 15)
+    let (value) = join_bytes(creatorAddress_low2, salt_high1, 15)
+    assert data[2] = value
+    # data[1] = salt_high(1 bytes) + salt_low(15 bytes)
+    let (salt_low1, local salt_low2) = split_felt_to_two(16, salt.low, 15)
+    let (value) = join_bytes(salt_high2, salt_low1, 15)
+    assert data[3] = value
+    # data[1] = salt_low(1 bytes) + codeHash_high(15 bytes)
+    let (codeHash_high1, local codeHash_high2) = split_felt_to_two(16, codeHash.high, 15)
+    let (value) = join_bytes(salt_low2, codeHash_high1, 15)
+    assert data[4] = value
+    # data[1] = codeHash_high(1 bytes) + codeHash_low(15 bytes)
+    let (codeHash_low1, local codeHash_low2) = split_felt_to_two(16, codeHash.low, 15)
+    let (value) = join_bytes(codeHash_high2, codeHash_low1, 15)
+    assert data[5] = value
+    # data[1] = codeHash_low(1 bytes)
+    assert data[6] = codeHash_low2
+
+    let (hash : Uint256) = hashBytes(Bytes(size=97, data_length=7, data=data))
+    let (recoveredAddress) = address_to_felt(hash)
+    return (recoveredAddress)
+end

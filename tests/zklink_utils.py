@@ -10,7 +10,7 @@ OP_FULL_EXIT = 5
 OP_CHANGE_PUBKEY = 6
 OP_FORCE_EXIT = 7
 OP_ORDER_MATCHING = 11
-CHUNK_BYTES = 14
+CHUNK_BYTES = 19
 BYTES_PER_FELT = 16
 
 class Token():
@@ -77,7 +77,7 @@ def getForcedExitPubdata(example):
 
 def getChangePubkeyPubdata(example):
     data = encode_abi_packed(
-        ["uint8","uint8","uint32","address","uint256","uint32"],
+        ["uint8","uint8","uint32","uint160","uint256","uint32"],
         [OP_CHANGE_PUBKEY] + example)
     return len(data), splitPubData(data)
 
@@ -95,3 +95,7 @@ def calAcceptHash(example):
     )
     return int.from_bytes(hexbytes, 'big')
     
+def paddingChunk(data):
+    padding_size = CHUNK_BYTES - len(data) % CHUNK_BYTES
+    data += b'\x00' * padding_size
+    return len(data), data

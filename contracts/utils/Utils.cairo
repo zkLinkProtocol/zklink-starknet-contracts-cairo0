@@ -1,19 +1,24 @@
 %lang starknet
 
 from starkware.cairo.common.cairo_keccak.keccak import finalize_keccak, keccak_bigend
+from starkware.cairo.common.cairo_secp.signature import recover_public_key
+from starkware.cairo.common.cairo_secp.bigint import BigInt3, bigint_to_uint256, uint256_to_bigint
+from starkware.cairo.common.cairo_secp.ec import EcPoint
 from starkware.cairo.common.cairo_builtins import BitwiseBuiltin
 from starkware.cairo.common.uint256 import Uint256, word_reverse_endian, uint256_reverse_endian
 from starkware.cairo.common.alloc import alloc
-from starkware.cairo.common.pow import pow
 from starkware.cairo.common.memcpy import memcpy
 from starkware.cairo.common.math import assert_nn_le, unsigned_div_rem, assert_not_equal, assert_lt
 from starkware.cairo.common.math_cmp import is_le, is_in_range
+from contracts.utils.Pow2 import pow2
 from contracts.utils.Bytes import (
     BYTES_PER_FELT,
     Bytes,
     split_bytes,
     join_bytes,
-    split_felt_to_two
+    split_felt_to_two,
+    read_felt,
+    read_uint256
 )
 
 func hash_array_to_uint256{
@@ -85,7 +90,7 @@ end
 
 # keep lower data
 func uint256_to_uint160{range_check_ptr}(input : Uint256) -> (output : felt):
-    let (div) = pow(256, 4)
+    let (div) = pow2(32)
     let (_, high) = unsigned_div_rem(input.high, div)
     let (output) = join_bytes(high, input.low, 16)
     return (output)
@@ -272,8 +277,8 @@ func keccak_add_aligned_data{
 }(index : felt, bytes : Bytes):
     alloc_locals
 
-    let (local num_reversed) = word_reverse_endian(bytes.data[index])
-    let (div) = pow(256, 8)
+    let (num_reversed) = word_reverse_endian(bytes.data[index])
+    let (div) = pow2(64)
     let (right, left) = unsigned_div_rem(num_reversed, div)
 
     assert inputs[0] = left
@@ -298,7 +303,7 @@ func keccak_add_unaligned_data{
         assert inputs[0] = num_reversed
         return ()
     else:
-        let (div) = pow(256, 8)
+        let (div) = pow2(64)
         let (right, left) = unsigned_div_rem(num_reversed, div)
 
         assert inputs[0] = left
@@ -315,10 +320,52 @@ func unaligned_word_reverse_endian{range_check_ptr, bitwise_ptr : BitwiseBuiltin
     assert_lt(0, size)
     assert_lt(size, 16)
 
-    let (local num_reversed) = word_reverse_endian(num)
-    tempvar padding = 16 - size
+    let (num_reversed) = word_reverse_endian(num)
+    let padding = 16 - size
 
-    let (div) = pow(256, padding)
+    let (div) = pow2(padding * 8)
     let (res, _) = unsigned_div_rem(num_reversed, div)
     return (res)
+end
+
+# Converts a public key point to the corresponding address.
+func public_key_point_to_address{
+    range_check_ptr, bitwise_ptr : BitwiseBuiltin*
+}(public_key_point : EcPoint) -> (address : felt):
+    alloc_locals
+    let (local keccak_ptr_start : felt*) = alloc()
+    let keccak_ptr = keccak_ptr_start
+
+    let (local elements : Uint256*) = alloc()
+    let (x_uint256 : Uint256) = bigint_to_uint256(public_key_point.x)
+    assert elements[0] = x_uint256
+    let (y_uint256 : Uint256) = bigint_to_uint256(public_key_point.y)
+    assert elements[1] = y_uint256
+    let (point_hash : Uint256) = keccak_uint256s_bigend{keccak_ptr=keccak_ptr_start}(2, elements)
+    finalize_keccak(keccak_ptr_start=keccak_ptr_start, keccak_ptr_end=keccak_ptr)
+
+    let (address) = address_to_felt(point_hash)
+    return (address)
+end
+
+func recoverAddressFromEthSignature{
+    bitwise_ptr : BitwiseBuiltin*,
+    range_check_ptr
+}(_signature : Bytes, _messageHash : Uint256) -> (recoveredAddress : felt):
+    alloc_locals
+
+    with_attr error_message("ut0"):
+        assert _signature.size = 65
+    end
+
+    let (offset, local _signR : Uint256) = read_uint256(_signature, 0)
+    let (offset, local _signS : Uint256) = read_uint256(_signature, offset)
+    let (_, local v) = read_felt(_signature, offset, 1)
+
+    let (local signR : BigInt3) = uint256_to_bigint(_signR)
+    let (local signS : BigInt3) = uint256_to_bigint(_signS)
+    let (messageHash : BigInt3) = uint256_to_bigint(_messageHash)
+    let (public_key_point : EcPoint) = recover_public_key(messageHash, signR, signS, v)
+    let (address) = public_key_point_to_address(public_key_point)
+    return (address)
 end

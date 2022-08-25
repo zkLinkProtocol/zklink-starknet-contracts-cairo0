@@ -3,7 +3,7 @@
 from starkware.cairo.common.cairo_builtins import HashBuiltin, BitwiseBuiltin
 from starkware.cairo.common.uint256 import Uint256
 
-from contracts.utils.Bytes import Bytes, FELT_MAX_BYTES
+from contracts.utils.Bytes import Bytes, BYTES_PER_FELT
 from contracts.utils.Operations import (
     DepositOperation,
     Withdraw,

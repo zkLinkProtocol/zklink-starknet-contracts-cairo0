@@ -320,19 +320,19 @@ func sub_totalCommittedPriorityRequests{
 end
 
 # Chain id defined by ZkLink
-@storage_var
-func chain_id() -> (chain_id : felt):
-end
+# @storage_var
+# func chain_id() -> (chain_id : felt):
+# end
 
-@view
-func get_chain_id{
-    syscall_ptr : felt*,
-    pedersen_ptr : HashBuiltin*,
-    range_check_ptr
-}() -> (chain_id : felt):
-    let (id) = chain_id.read()
-    return (chain_id=id)
-end
+# @view
+# func get_chain_id{
+#     syscall_ptr : felt*,
+#     pedersen_ptr : HashBuiltin*,
+#     range_check_ptr
+# }() -> (chain_id : felt):
+#     let (id) = chain_id.read()
+#     return (chain_id=id)
+# end
 
 # First open priority request id
 @storage_var

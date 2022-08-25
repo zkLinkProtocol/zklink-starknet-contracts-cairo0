@@ -6,7 +6,7 @@ from starkware.cairo.common.uint256 import Uint256, word_reverse_endian
 from starkware.cairo.common.alloc import alloc
 from starkware.cairo.common.math import unsigned_div_rem, assert_lt
 from starkware.cairo.common.math_cmp import is_in_range
-from starkware.cairo.common.pow import pow
+
 from contracts.utils.Bytes import (
     Bytes,
     BYTES_PER_FELT

@@ -37,9 +37,6 @@ async def contract_factory(contract_classes):
     contract = await starknet.deploy(contract_class=contract_cls)
     return starknet, account, contract
 
-def str_to_felt(owner):
-    return int(bytes(owner, 'ascii'),16)
-
 @pytest.mark.asyncio
 async def test_testDepositPubdata(contract_factory):
     _, account, contract = contract_factory
@@ -99,10 +96,10 @@ async def test_testForcedExitPubdata(contract_factory):
 async def test_testChangePubkeyPubdata(contract_factory):
     _, account, contract = contract_factory
     
-    pubKeyHash = '0x823B747710C5bC9b8A47243f2c3d1805F1aA00c5'
+    pubKeyHash = 0x823B747710C5bC9b8A47243f2c3d1805F1aA00c5
     
     example = [1, 2, pubKeyHash, account.contract_address, 3]
     pubdata_len, pubdata = getChangePubkeyPubdata(example)
     
-    contract_example = (1, 2, str_to_felt(pubKeyHash), account.contract_address, 3)
+    contract_example = (1, 2, pubKeyHash, account.contract_address, 3)
     await contract.testChangePubkeyPubdata(contract_example, pubdata_len, pubdata).invoke()

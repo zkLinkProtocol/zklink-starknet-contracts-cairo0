@@ -3,9 +3,9 @@
 from starkware.cairo.common.alloc import alloc
 from starkware.cairo.common.math import assert_nn_le, unsigned_div_rem, assert_not_zero, assert_lt
 from starkware.cairo.common.math_cmp import is_le
-from starkware.cairo.common.pow import pow
 from starkware.cairo.common.uint256 import Uint256
 from starkware.cairo.common.memcpy import memcpy
+from contracts.utils.Pow2 import pow2
 
 # bytes of per felt
 const BYTES_PER_FELT = 16
@@ -25,7 +25,7 @@ func split_felt_to_two{
 
     let base = input_bytes - at
 
-    let (div) = pow(256, base)
+    let (div) = pow2(base * 8)
     let (left, right) = unsigned_div_rem(input, div)
     
     return (left, right)
@@ -48,17 +48,17 @@ func split_bytes{
     tempvar offset_end = offset + data_length
     tempvar data_end = input_bytes - offset_end
 
-    let (move1) = pow(256, data_end)
+    let (move1) = pow2(data_end * 8)
     let (local res1, _) = unsigned_div_rem(input, move1)
 
-    let (shit) = pow(256, data_length)
+    let (shit) = pow2(data_length * 8)
     let (_, res2) = unsigned_div_rem(res1, shit)
     
     return (output=res2)
 end
 
 func join_bytes{range_check_ptr}(a : felt, b : felt, b_length : felt) -> (res : felt):
-    let (shit) = pow(256, b_length)
+    let (shit) = pow2(b_length * 8)
     let res = a * shit + b
     return (res)
 end
@@ -164,7 +164,7 @@ func read_uint256{range_check_ptr}(
     # checks
     assert_nn_le(offset + 32, bytes.size)
 
-    let (local base) = pow(256, 8)
+    let (local base) = pow2(64)
 
     let (new_offset, data1) = read_felt(bytes, offset, 8)
     let (new_offset, data2) = read_felt(bytes, new_offset, 8)
@@ -284,7 +284,7 @@ func read_bytes{range_check_ptr}(
 
             # last
             let (local one_felt) = is_le(0, start_offset - end_offset)
-            let (local first) = split_bytes(BYTES_PER_FELT, bytes.data[end_index - 1], offset, BYTES_PER_FELT - offset)
+            let (local first) = split_bytes(BYTES_PER_FELT, bytes.data[end_index - 1], start_offset, BYTES_PER_FELT - start_offset)
             if end_index == bytes.data_length - 1:
                 if unaligned == 0:
                     let (last) = split_bytes(BYTES_PER_FELT, bytes.data[end_index], 0, end_offset)
@@ -376,7 +376,7 @@ func create_bytes_from_uint160{range_check_ptr}(num : felt) -> (bytes : Bytes):
 
     let (data : felt*) = alloc()
 
-    let (div) = pow(256, 4)
+    let (div) = pow2(32)
     let (first, last) = unsigned_div_rem(num, div)
     assert data[0] = first
     assert data[1] = last

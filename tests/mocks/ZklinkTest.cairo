@@ -2,8 +2,10 @@
 
 from starkware.cairo.common.cairo_builtins import HashBuiltin, BitwiseBuiltin
 from starkware.cairo.common.uint256 import Uint256
-from starkware.cairo.common.dict_access import DictAccess
+from starkware.cairo.common.alloc import alloc
 from starkware.starknet.common.syscalls import get_block_number
+from starkware.cairo.common.default_dict import default_dict_new, default_dict_finalize
+from starkware.cairo.common.dict_access import DictAccess
 
 from openzeppelin.upgrades.library import Proxy
 
@@ -35,6 +37,7 @@ from contracts.Zklink import (
     parse_CompressedBlockExtraInfo,
     parse_commit_block_info,
     CompressedBlockExtraInfo_new,
+    OnchainOperationData,
     add_priority_request,
     commit_one_block,
     collect_onchain_ops,
@@ -48,6 +51,7 @@ from contracts.utils.Bytes import (
     read_uint256_array,
     read_bytes,
     BYTES_PER_FELT,
+    create_empty_bytes
 )
 
 from contracts.Zklink import (
@@ -223,30 +227,62 @@ func testCommitOneBlock{
     end
 end
 
-# @external
-# func testCollectOnchainOps{
-#     syscall_ptr : felt*,
-#     pedersen_ptr : HashBuiltin*,
-#     bitwise_ptr : BitwiseBuiltin*,
-#     range_check_ptr
-# }(size : felt, data_len : felt, data : felt*) -> (
-#     processableOperationsHash : Uint256,
-#     priorityOperationsProcessed : felt,
-#     offsetsCommitment : felt,
-#     onchainOperationPubdataHashs_len : felt,
-#     onchainOperationPubdataHashs : Uint256*
-# ):
-#     alloc_locals
-#     let (_, _newBlockData : CommitBlockInfo) = parse_commit_block_info(bytes, offset)
-#     let (
-#         processableOperationsHash : Uint256,
-#         priorityOperationsProcessed,
-#         offsetsCommitment,
-#         local onchainOperationPubdataHashs_low : DictAccess*,
-#         local onchainOperationPubdataHashs_high : DictAccess*
-#     ) = collect_onchain_ops(_newBlockData)
-
-# end
+@external
+func testCollectOnchainOps{
+    syscall_ptr : felt*,
+    pedersen_ptr : HashBuiltin*,
+    bitwise_ptr : BitwiseBuiltin*,
+    range_check_ptr
+}(size : felt, data_len : felt, data : felt*) -> (
+    processableOperationsHash : Uint256,
+    priorityOperationsProcessed : felt,
+    offsetsCommitment : felt
+):
+    alloc_locals
+    let bytes = Bytes(size, data_len, data)
+    let (_, _newBlockData : CommitBlockInfo) = parse_commit_block_info(bytes, 0)
+    # public_data
+    # let (data : felt*) = alloc()
+    # assert data[0] = 7980560271570044941417397239969131178
+    # assert data[1] = 226854911280625642308916222774965685857
+    # assert data[2] = 69949608544860534348462285797420200945
+    # assert data[3] = 237112514149138171950628546906762248192
+    # assert data[4] = 0
+    # # OnchainOperationData
+    # let (onchain_operations : OnchainOperationData*) = alloc()
+    # let (eth_witness) = create_empty_bytes()
+    # assert onchain_operations[0] = OnchainOperationData(0, eth_witness)
+    
+    # let _newBlockData = CommitBlockInfo(
+    #     new_state_hash=Uint256(1, 0),
+    #     timestamp=Uint256(1, 0),
+    #     block_number=1,
+    #     fee_account=0,
+    #     public_data=Bytes(70, 5, data),
+    #     onchain_operations_size=1,
+    #     onchain_operations=onchain_operations
+    # )
+    let (local low_start : DictAccess*) = default_dict_new(default_value=0)
+    default_dict_finalize(
+        dict_accesses_start=low_start,
+        dict_accesses_end=low_start,
+        default_value=0
+    )
+    let (local high_start : DictAccess*) = default_dict_new(default_value=0)
+    default_dict_finalize(
+        dict_accesses_start=high_start,
+        dict_accesses_end=high_start,
+        default_value=0
+    )
+    let low_dict_ptr = low_start
+    let high_dict_ptr = high_start
+    let (
+        processableOperationsHash : Uint256,
+        priorityOperationsProcessed,
+        offsetsCommitment
+    ) = collect_onchain_ops{low_dict_ptr=low_dict_ptr, high_dict_ptr=high_dict_ptr}(_newBlockData)
+    return (processableOperationsHash, priorityOperationsProcessed, offsetsCommitment)
+end
 
 @external
 func testExecuteWithdraw{
@@ -301,6 +337,16 @@ func mockProveBlock{
     set_storedBlockHashes(storedBlockInfo.block_number, hash)
     set_totalBlocksProven(storedBlockInfo.block_number)
     return ()
+end
+
+@view
+func getAuthFact{
+    syscall_ptr : felt*,
+    pedersen_ptr : HashBuiltin*,
+    range_check_ptr
+}(account : felt, nonce : felt) -> (res : Uint256):
+    let (res) = get_authFacts((account, nonce))
+    return (res)
 end
 
 @external
