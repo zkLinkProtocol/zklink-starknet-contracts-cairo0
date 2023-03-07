@@ -775,31 +775,31 @@ func setAuthPubkeyHash{
     return ()
 end
 
-# Deposit ETH to Layer 2 - transfer ether from user into contract, validate it, register deposit.
-@external
-func depositETH{
-    syscall_ptr : felt*,
-    pedersen_ptr : HashBuiltin*,
-    bitwise_ptr : BitwiseBuiltin*,
-    range_check_ptr
-}(_zkLinkAddress : Uint256, _subAccountId : felt, _amount : felt):
-    # Lock with reentrancy_guard
-    ReentrancyGuard._start()
+# # Deposit ETH to Layer 2 - transfer ether from user into contract, validate it, register deposit.
+# @external
+# func depositETH{
+#     syscall_ptr : felt*,
+#     pedersen_ptr : HashBuiltin*,
+#     bitwise_ptr : BitwiseBuiltin*,
+#     range_check_ptr
+# }(_zkLinkAddress : Uint256, _subAccountId : felt, _amount : felt):
+#     # Lock with reentrancy_guard
+#     ReentrancyGuard._start()
     
-    let (eth_address) = get_eth_address()
-    # deposit
-    deposit(
-        _tokenAddress=eth_address,
-        _amount=_amount,
-        _zkLinkAddress=_zkLinkAddress,
-        _subAccountId=_subAccountId,
-        _mapping=0
-    )
+#     let (eth_address) = get_eth_address()
+#     # deposit
+#     deposit(
+#         _tokenAddress=eth_address,
+#         _amount=_amount,
+#         _zkLinkAddress=_zkLinkAddress,
+#         _subAccountId=_subAccountId,
+#         _mapping=0
+#     )
 
-    # Unlock
-    ReentrancyGuard._end()
-    return ()
-end
+#     # Unlock
+#     ReentrancyGuard._end()
+#     return ()
+# end
 
 # # Deposit ERC20 token to Layer 2 - transfer ERC20 tokens from user into contract, validate it, register deposit
 # # it MUST be ok to call other external functions within from this function
